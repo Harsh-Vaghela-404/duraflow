@@ -1,5 +1,5 @@
 {
-  "name": "agentos",
+  "name": "duraflow",
   "private": true,
   "scripts": {
     "build": "turbo run build",
