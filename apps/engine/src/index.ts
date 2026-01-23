@@ -3,10 +3,8 @@
 
 import { Pool } from 'pg';
 import Redis from 'ioredis';
-
-const pg = new Pool({
-    connectionString: process.env.DATABASE_URL || 'postgres://duraflow:duraflow@localhost:5432/duraflow',
-});
+import { TaskRepository } from './repositories/task.repository';
+import { pool } from './db';
 
 const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
 
@@ -14,7 +12,8 @@ async function main() {
     console.log('[duraflow] starting engine...');
 
     // verify connections
-    await pg.query('SELECT 1');
+    await pool.query('SELECT 1');
+    const taskRepo = new TaskRepository(pool);
     console.log('[duraflow] postgres connected');
 
     await redis.ping();
