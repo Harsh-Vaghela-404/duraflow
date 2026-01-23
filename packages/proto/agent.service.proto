@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package duraflow;
+
+enum TaskStatus {
+    TASK_STATUS_UNSPECIFIED = 0;
+    PENDING = 1;
+    RUNNING = 2;
+    COMPLETED = 3;
+    FAILED = 4;
+    CANCELLED = 5;
+}
+
+
+message SubmitTaskRequest {
+    string workflow_name = 1;
+    bytes input = 2;
+}
+
+message SubmitTaskResponse {
+    string task_id = 1;
+}
+
+message GetTaskStatusRequest {
+    string task_id = 1;
+}
+
+message GetTaskStatusResponse {
+    TaskStatus status = 1;
+    bytes output = 2;
+    bytes error = 3; 
+}
+
+message CancelTaskRequest {
+    string task_id = 1;
+}
+
+message CancelTaskResponse {
+    bool success = 1;
+}
+
+service AgentService {
+    rpc SubmitTask(SubmitTaskRequest) returns (SubmitTaskResponse);
+    rpc GetTaskStatus(GetTaskStatusRequest) returns (GetTaskStatusResponse);
+    rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse);
+}

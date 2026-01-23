@@ -1,6 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/tsconfig",
-  "display": "AgentOS Base",
+  "display": "Duraflow Base",
   "compilerOptions": {
     "strict": true,
     "noImplicitAny": true,

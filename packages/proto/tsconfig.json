@@ -1,5 +1,5 @@
 {
-    "extends": "@agentos/typescript-config/base.json",
+    "extends": "@duraflow/typescript-config/base.json",
     "compilerOptions": {
         "outDir": "./dist",
         "rootDir": "./src"
