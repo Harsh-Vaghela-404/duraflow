@@ -1,3 +1,7 @@
+/**
+ * gRPC server configuration and initialization.
+ * Loads proto definitions, registers services, and enables reflection for debugging.
+ */
 import * as grpc from '@grpc/grpc-js';
 import * as protoLoader from '@grpc/proto-loader';
 import path from 'path';
@@ -26,17 +30,19 @@ const agentPackageDef = protoLoader.loadSync(AGENT_PROTO_PATH, {
 const healthProto = grpc.loadPackageDefinition(healthPackageDef) as any;
 const agentProto = grpc.loadPackageDefinition(agentPackageDef) as any;
 
+/**
+ * Creates gRPC server with Health and AgentService.
+ * Reflection enabled for grpcurl debugging.
+ */
 export function createGrpcServer(): grpc.Server {
     const server = new grpc.Server();
 
-    // Register Health Service
     const healthService = new HealthService();
     server.addService(healthProto.grpc.health.v1.Health.service, {
         check: healthService.check.bind(healthService),
         watch: healthService.watch.bind(healthService),
     });
 
-    // Register Agent Service
     const agentService = new AgentServiceImpl();
     server.addService(agentProto.duraflow.AgentService.service, {
         submitTask: agentService.submitTask.bind(agentService),
@@ -54,6 +60,10 @@ export function createGrpcServer(): grpc.Server {
     return server;
 }
 
+/**
+ * Starts gRPC server on specified port.
+ * Binds to 0.0.0.0 for container compatibility, no TLS.
+ */
 export function startGrpcServer(server: grpc.Server, port: number = 50051): Promise<number> {
     return new Promise((resolve, reject) => {
         server.bindAsync(

@@ -1,3 +1,7 @@
+/**
+ * Duraflow engine entry point.
+ * Initializes database connections and starts the gRPC server.
+ */
 import { pool, redis } from './db';
 import { createGrpcServer, startGrpcServer } from './grpc/server';
 
@@ -12,7 +16,6 @@ async function main() {
 
     const grpcServer = createGrpcServer();
     await startGrpcServer(grpcServer, 50051);
-
 
     console.log('[duraflow] engine ready');
 }

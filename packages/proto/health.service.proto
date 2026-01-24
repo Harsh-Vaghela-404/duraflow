@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package grpc.health.v1;
 
+// Standard gRPC health checking protocol
 message HealthCheckRequest {
   string service = 1;
 }

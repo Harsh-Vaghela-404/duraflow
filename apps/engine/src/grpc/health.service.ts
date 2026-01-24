@@ -7,6 +7,10 @@ import {
 import { ServerUnaryCall, sendUnaryData, ServerWritableStream } from '@grpc/grpc-js';
 import { pool, redis } from '../db';
 
+/**
+ * Standard gRPC health check service implementation.
+ * Verifies Postgres and Redis connectivity.
+ */
 export class HealthService implements HealthServer {
     [name: string]: any;
 

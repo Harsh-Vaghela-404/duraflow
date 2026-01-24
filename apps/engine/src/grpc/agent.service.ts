@@ -4,7 +4,6 @@ import { TaskRepository } from '../repositories/task.repository';
 import { taskStatus } from '../db/task.entity';
 import { pool } from '../db';
 
-// These interfaces match the proto definitions
 interface SubmitTaskRequest {
     workflow_name: string;
     input: Buffer;
@@ -19,7 +18,7 @@ interface GetTaskStatusRequest {
 }
 
 interface GetTaskStatusResponse {
-    status: number; // TaskStatus enum
+    status: number;
     output: Buffer;
     error: Buffer;
 }
@@ -32,6 +31,10 @@ interface CancelTaskResponse {
     success: boolean;
 }
 
+/**
+ * gRPC service implementation for agent task management.
+ * Handles task submission, status retrieval, and cancellation.
+ */
 export class AgentServiceImpl {
     private taskRepo: TaskRepository;
 
@@ -39,6 +42,16 @@ export class AgentServiceImpl {
         this.taskRepo = new TaskRepository(pool);
     }
 
+    /**
+     * Submits a new task to the queue.
+     * Creates a task record in PENDING status and returns its UUID.
+     * 
+     * @param call gRPC call containing workflow_name and input bytes
+     * @param callback Response callback with task_id or error
+     * 
+     * Input bytes are expected to be JSON-encoded.
+     * Returns INTERNAL error if JSON parsing or database insertion fails.
+     */
     async submitTask(
         call: ServerUnaryCall<SubmitTaskRequest, SubmitTaskResponse>,
         callback: sendUnaryData<SubmitTaskResponse>
@@ -46,10 +59,8 @@ export class AgentServiceImpl {
         try {
             const { workflow_name, input } = call.request;
 
-            // Parse input from bytes to JSON
             const inputData = input ? JSON.parse(input.toString('utf-8')) : {};
 
-            // Create task in database
             const task = await this.taskRepo.create(workflow_name, inputData);
 
             callback(null, { task_id: task.id });
@@ -62,6 +73,16 @@ export class AgentServiceImpl {
         }
     }
 
+    /**
+     * Retrieves current status and results of a task.
+     * 
+     * @param call gRPC call containing task_id
+     * @param callback Response callback with status, output, and error
+     * 
+     * Returns NOT_FOUND if task doesn't exist.
+     * Output and error are JSON-encoded as bytes (empty if not applicable).
+     * Status is mapped from database enum to proto enum values.
+     */
     async getTaskStatus(
         call: ServerUnaryCall<GetTaskStatusRequest, GetTaskStatusResponse>,
         callback: sendUnaryData<GetTaskStatusResponse>
@@ -78,7 +99,6 @@ export class AgentServiceImpl {
                 });
             }
 
-            // Map database status to proto enum
             const statusMap: Record<string, number> = {
                 'pending': 1,
                 'running': 2,
@@ -101,6 +121,17 @@ export class AgentServiceImpl {
         }
     }
 
+    /**
+     * Attempts to cancel a task.
+     * Only pending or running tasks can be cancelled.
+     * 
+     * @param call gRPC call containing task_id
+     * @param callback Response callback with success boolean
+     * 
+     * Returns NOT_FOUND if task doesn't exist.
+     * Returns success=false if task already completed/failed/cancelled.
+     * Returns success=true if task was successfully cancelled.
+     */
     async cancelTask(
         call: ServerUnaryCall<CancelTaskRequest, CancelTaskResponse>,
         callback: sendUnaryData<CancelTaskResponse>
@@ -117,7 +148,6 @@ export class AgentServiceImpl {
                 });
             }
 
-            // Only allow cancellation of pending or running tasks
             if (task.status !== 'pending' && task.status !== 'running') {
                 return callback(null, { success: false });
             }
