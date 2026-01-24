@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import Redis from 'ioredis';
 import { Pool } from 'pg';
 
 export const pool = new Pool({
@@ -7,6 +8,8 @@ export const pool = new Pool({
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 2000,
 });
+
+export const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
 
 pool.on('error', (err) => {
     console.error('Unexpected error on idle client', err);
