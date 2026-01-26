@@ -59,4 +59,28 @@ export class TaskRepository {
         );
         return res?.rows;
     }
+
+
+    async dequeue(batchSize: number, workerId: string): Promise<TaskEntity[]> {
+        const query = `
+            WITH next_jobs AS (
+                SELECT id FROM agent_tasks 
+                WHERE status = $1 AND (scheduled_at <= NOW() OR scheduled_at IS NULL)
+                ORDER BY priority DESC, created_at ASC
+                LIMIT $2
+                FOR UPDATE SKIP LOCKED 
+            )
+            UPDATE agent_tasks 
+            SET 
+                status = $3, 
+                worker_id = $4, 
+                heartbeat_at = NOW() 
+            FROM next_jobs 
+            WHERE agent_tasks.id = next_jobs.id
+            RETURNING agent_tasks.*
+        `;
+        const res = await this.pool.query(query, [taskStatus.PENDING, batchSize, taskStatus.RUNNING, workerId]);
+        return res?.rows || [];
+    }
+
 }
