@@ -1,7 +1,3 @@
-/**
- * gRPC server configuration and initialization.
- * Loads proto definitions, registers services, and enables reflection for debugging.
- */
 import * as grpc from '@grpc/grpc-js';
 import * as protoLoader from '@grpc/proto-loader';
 import path from 'path';
@@ -11,29 +7,20 @@ import { AgentServiceImpl } from './agent.service';
 const HEALTH_PROTO_PATH = path.join(__dirname, '../../../..', 'packages/proto/health.service.proto');
 const AGENT_PROTO_PATH = path.join(__dirname, '../../../..', 'packages/proto/agent.service.proto');
 
-const healthPackageDef = protoLoader.loadSync(HEALTH_PROTO_PATH, {
+const protoOptions = {
     keepCase: true,
     longs: String,
     enums: String,
     defaults: true,
     oneofs: true,
-});
+};
 
-const agentPackageDef = protoLoader.loadSync(AGENT_PROTO_PATH, {
-    keepCase: true,
-    longs: String,
-    enums: String,
-    defaults: true,
-    oneofs: true,
-});
+const healthPackageDef = protoLoader.loadSync(HEALTH_PROTO_PATH, protoOptions);
+const agentPackageDef = protoLoader.loadSync(AGENT_PROTO_PATH, protoOptions);
 
 const healthProto = grpc.loadPackageDefinition(healthPackageDef) as any;
 const agentProto = grpc.loadPackageDefinition(agentPackageDef) as any;
 
-/**
- * Creates gRPC server with Health and AgentService.
- * Reflection enabled for grpcurl debugging.
- */
 export function createGrpcServer(): grpc.Server {
     const server = new grpc.Server();
 
@@ -50,6 +37,7 @@ export function createGrpcServer(): grpc.Server {
         cancelTask: agentService.cancelTask.bind(agentService),
     });
 
+    // reflection for grpcurl debugging
     const reflection = require('@grpc/reflection');
     const reflectionService = new reflection.ReflectionService({
         ...healthPackageDef,
@@ -60,10 +48,6 @@ export function createGrpcServer(): grpc.Server {
     return server;
 }
 
-/**
- * Starts gRPC server on specified port.
- * Binds to 0.0.0.0 for container compatibility, no TLS.
- */
 export function startGrpcServer(server: grpc.Server, port: number = 50051): Promise<number> {
     return new Promise((resolve, reject) => {
         server.bindAsync(

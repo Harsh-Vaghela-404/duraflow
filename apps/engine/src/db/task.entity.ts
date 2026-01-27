@@ -1,7 +1,3 @@
-/**
- * Lifecycle states for agent tasks.
- * Tasks progress: PENDING → RUNNING → COMPLETED/FAILED/CANCELLED
- */
 export enum taskStatus {
     PENDING = 'pending',
     RUNNING = 'running',
@@ -10,10 +6,6 @@ export enum taskStatus {
     CANCELLED = 'cancelled'
 }
 
-/**
- * Represents an agent task in the database.
- * Tasks are the top-level unit of work submitted via gRPC.
- */
 export interface TaskEntity {
     id: string;
     workflow_name: string;
@@ -24,7 +16,7 @@ export interface TaskEntity {
     priority: number;
     scheduled_at: Date;
     completed_at: Date;
-    heartbeat_at: Date;  // For dead worker detection
+    heartbeat_at: Date;
     worker_id: string;
     retry_count: number;
     max_retries: number;
