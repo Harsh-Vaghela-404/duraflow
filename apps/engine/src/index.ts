@@ -3,8 +3,9 @@ import { createGrpcServer, startGrpcServer } from './grpc/server';
 import { TaskRepository } from './repositories/task.repository';
 import { Poller } from './services/poller';
 import { TaskEntity, taskStatus } from './db/task.entity';
+import { v7 as uuid } from 'uuid';
 
-const WORKER_ID = `worker-${Math.random().toString(36).substring(2, 10)}`;
+const WORKER_ID = `worker-${uuid().slice(0, 8)}`;
 
 let poller: Poller | null = null;
 
