@@ -4,7 +4,7 @@ import { TaskEntity, taskStatus } from "../db/task.entity";
 export class TaskRepository {
     constructor(private pool: Pool) { }
 
-    async create(name: string, input: any): Promise<TaskEntity> {
+    async create(name: string, input: Record<string, any>): Promise<TaskEntity> {
         const res = await this.pool.query(
             'INSERT INTO agent_tasks (workflow_name, input) VALUES($1, $2) RETURNING *',
             [name, input]
