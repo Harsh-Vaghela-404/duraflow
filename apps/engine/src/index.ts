@@ -4,6 +4,7 @@ import { TaskRepository } from './repositories/task.repository';
 import { Poller, HeartbeatService, Reaper } from './services';
 import { TaskEntity, taskStatus } from './db/task.entity';
 import { v7 as uuid } from 'uuid';
+import { LeaderElector } from './services/leaderelector';
 
 const WORKER_ID = `worker-${uuid().slice(0, 8)}`;
 
@@ -12,6 +13,7 @@ let reaper: Reaper | null = null;
 
 const taskRepo = new TaskRepository(pool);
 const heartbeat = new HeartbeatService(taskRepo);
+const leaderElector = new LeaderElector(pool);
 
 async function handleTask(task: TaskEntity): Promise<void> {
     console.log(`[worker] processing task ${task.id} (${task.workflow_name})`);
@@ -43,7 +45,10 @@ async function main() {
     await startGrpcServer(grpcServer, 50051);
 
     reaper = new Reaper(pool);
-    reaper.start();
+
+    if (await leaderElector.tryBecomeLeader()) {
+        reaper.start();
+    }
 
     poller = new Poller(taskRepo, WORKER_ID, handleTask);
     poller.start();
@@ -58,6 +63,7 @@ async function shutdown(signal: string) {
     if (poller) await poller.stop();
     if (reaper) reaper.stop();
 
+    await leaderElector.releaseLeaderShip();
     await pool.end();
     await redis.quit();
     console.log('[duraflow] shutdown complete');
