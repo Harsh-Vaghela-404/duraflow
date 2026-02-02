@@ -2,10 +2,10 @@
     "extends": "@duraflow/typescript-config/base.json",
     "compilerOptions": {
         "outDir": "./dist",
-        "rootDir": "./src"
+        "rootDir": "./generated"
     },
     "include": [
-        "src/**/*"
+        "generated/**/*"
     ],
     "exclude": [
         "node_modules",

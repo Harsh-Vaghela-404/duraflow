@@ -8,10 +8,7 @@ export interface ReapedTask {
     action: 'requeued' | 'failed';
 }
 
-/**
- * Detects tasks from dead workers (stale heartbeat) and requeues them for retry,
- * or marks them failed if max retries exceeded. Should run as singleton in cluster.
- */
+// Recovers stale tasks from dead workers - runs as singleton
 export class Reaper {
     private readonly intervalMs: number;
     private readonly staleThresholdSeconds: number;

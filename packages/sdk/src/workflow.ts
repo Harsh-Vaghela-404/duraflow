@@ -30,11 +30,6 @@ class Registry {
 
 export const globalRegistry = new Registry();
 
-/**
- * Define and register a new workflow.
- * @param name Unique name of the workflow
- * @param handler The async function implementing the workflow logic
- */
 export function workflow(name: string, handler: WorkflowHandler): Workflow {
     return globalRegistry.register(name, handler);
 }

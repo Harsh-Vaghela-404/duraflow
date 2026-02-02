@@ -39,9 +39,54 @@ message CancelTaskResponse {
     bool success = 1;  // False if already completed/failed
 }
 
+// Step memoization messages
+message GetStepResultRequest {
+    string task_id = 1;
+    string step_key = 2;
+}
+
+message GetStepResultResponse {
+    bool found = 1;
+    string status = 2;      // 'pending', 'running', 'completed', 'failed'
+    bytes output = 3;       // JSON-encoded result (only if completed)
+}
+
+message SaveStepResultRequest {
+    string task_id = 1;
+    string step_key = 2;
+    bytes output = 3;       // JSON-encoded result
+}
+
+message SaveStepResultResponse {
+    string step_id = 1;
+}
+
+message FailStepRequest {
+    string task_id = 1;
+    string step_key = 2;
+    string error = 3;
+}
+
+message FailStepResponse {}
+
+message CreateStepRequest {
+    string task_id = 1;
+    string step_key = 2;
+}
+
+message CreateStepResponse {
+    string step_id = 1;
+}
+
 // Task queue management
 service AgentService {
     rpc SubmitTask(SubmitTaskRequest) returns (SubmitTaskResponse);
     rpc GetTaskStatus(GetTaskStatusRequest) returns (GetTaskStatusResponse);
     rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse);
+    
+    // Step memoization
+    rpc GetStepResult(GetStepResultRequest) returns (GetStepResultResponse);
+    rpc CreateStep(CreateStepRequest) returns (CreateStepResponse);
+    rpc SaveStepResult(SaveStepResultRequest) returns (SaveStepResultResponse);
+    rpc FailStep(FailStepRequest) returns (FailStepResponse);
 }
