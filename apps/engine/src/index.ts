@@ -1,7 +1,7 @@
 import { pool, redis } from './db';
 import { createGrpcServer, startGrpcServer } from './grpc/server';
 import { TaskRepository } from './repositories/task.repository';
-import { Poller, HeartbeatService, Reaper } from './services';
+import { Poller, HeartbeatService, Reaper, WorkflowExecutor } from './services';
 import { TaskEntity, taskStatus } from './db/task.entity';
 import { v7 as uuid } from 'uuid';
 import { LeaderElector } from './services/leaderelector';
@@ -14,14 +14,14 @@ let reaper: Reaper | null = null;
 const taskRepo = new TaskRepository(pool);
 const heartbeat = new HeartbeatService(taskRepo);
 const leaderElector = new LeaderElector(pool);
+const executor = new WorkflowExecutor(pool);
 
 async function handleTask(task: TaskEntity): Promise<void> {
     console.log(`[worker] processing task ${task.id} (${task.workflow_name})`);
     heartbeat.start(task.id);
 
     try {
-        // TODO: Week 3 - replace with actual workflow execution
-        await taskRepo.updateStatus(task.id, taskStatus.COMPLETED);
+        await executor.execute(task);
         console.log(`[worker] completed task ${task.id}`);
     } catch (err) {
         console.error(`[worker] task ${task.id} failed:`, err);

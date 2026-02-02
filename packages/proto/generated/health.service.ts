@@ -11,6 +11,7 @@ import { map } from "rxjs/operators";
 
 export const protobufPackage = "grpc.health.v1";
 
+/** Standard gRPC health checking protocol */
 export interface HealthCheckRequest {
   service: string;
 }

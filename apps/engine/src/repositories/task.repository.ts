@@ -21,6 +21,13 @@ export class TaskRepository {
         await this.pool.query('UPDATE agent_tasks SET status = $1 WHERE id = $2', [status, id]);
     }
 
+    async updateCompleted(id: string, output: unknown): Promise<void> {
+        await this.pool.query(
+            'UPDATE agent_tasks SET status = $1, output = $2, completed_at = NOW() WHERE id = $3',
+            [taskStatus.COMPLETED, JSON.stringify(output), id]
+        );
+    }
+
     async updateHeartbeat(id: string): Promise<void> {
         await this.pool.query('UPDATE agent_tasks SET heartbeat_at = NOW() WHERE id = $1', [id]);
     }
