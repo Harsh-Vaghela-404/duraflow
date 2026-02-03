@@ -39,9 +39,46 @@ message CancelTaskResponse {
     bool success = 1;  // False if already completed/failed
 }
 
+// Step operations for memoization and crash recovery
+message GetStepRequest {
+    string task_id = 1;
+    string step_key = 2;
+}
+
+message GetStepResponse {
+    bool found = 1;
+    bool completed = 2;
+    bytes output = 3;  // JSON-encoded, only set if completed
+}
+
+message CompleteStepRequest {
+    string task_id = 1;
+    string step_key = 2;
+    bytes output = 3;  // JSON-encoded
+}
+
+message CompleteStepResponse {
+    bool success = 1;
+}
+
+message FailStepRequest {
+    string task_id = 1;
+    string step_key = 2;
+    bytes error = 3;  // JSON-encoded
+}
+
+message FailStepResponse {
+    bool success = 1;
+}
+
 // Task queue management
 service AgentService {
     rpc SubmitTask(SubmitTaskRequest) returns (SubmitTaskResponse);
     rpc GetTaskStatus(GetTaskStatusRequest) returns (GetTaskStatusResponse);
     rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse);
+    
+    // Step operations for SDK crash recovery
+    rpc GetStep(GetStepRequest) returns (GetStepResponse);
+    rpc CompleteStep(CompleteStepRequest) returns (CompleteStepResponse);
+    rpc FailStep(FailStepRequest) returns (FailStepResponse);
 }

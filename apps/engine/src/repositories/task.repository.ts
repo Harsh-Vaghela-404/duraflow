@@ -28,6 +28,17 @@ export class TaskRepository {
         );
     }
 
+    async fail(id: string, error: unknown): Promise<void> {
+        const errorObj = error instanceof Error
+            ? { message: error.message, name: error.name, stack: error.stack }
+            : { message: String(error) };
+
+        await this.pool.query(
+            'UPDATE agent_tasks SET status = $1, error = $2, completed_at = NOW() WHERE id = $3',
+            [taskStatus.FAILED, JSON.stringify(errorObj), id]
+        );
+    }
+
     async updateHeartbeat(id: string): Promise<void> {
         await this.pool.query('UPDATE agent_tasks SET heartbeat_at = NOW() WHERE id = $1', [id]);
     }

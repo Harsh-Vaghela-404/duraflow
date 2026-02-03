@@ -22,7 +22,13 @@ const healthProto = grpc.loadPackageDefinition(healthPackageDef) as any;
 const agentProto = grpc.loadPackageDefinition(agentPackageDef) as any;
 
 export function createGrpcServer(): grpc.Server {
-    const server = new grpc.Server();
+    const server = new grpc.Server({
+        'grpc.max_receive_message_length': 4 * 1024 * 1024,
+        'grpc.max_send_message_length': 4 * 1024 * 1024,
+        'grpc.keepalive_time_ms': 30000,
+        'grpc.keepalive_timeout_ms': 10000,
+        'grpc.keepalive_permit_without_calls': 1,
+    });
 
     const healthService = new HealthService();
     server.addService(healthProto.grpc.health.v1.Health.service, {
@@ -35,6 +41,9 @@ export function createGrpcServer(): grpc.Server {
         submitTask: agentService.submitTask.bind(agentService),
         getTaskStatus: agentService.getTaskStatus.bind(agentService),
         cancelTask: agentService.cancelTask.bind(agentService),
+        getStep: agentService.getStep.bind(agentService),
+        completeStep: agentService.completeStep.bind(agentService),
+        failStep: agentService.failStep.bind(agentService),
     });
 
     // reflection for grpcurl debugging

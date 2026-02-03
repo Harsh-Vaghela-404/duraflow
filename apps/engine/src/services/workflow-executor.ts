@@ -16,6 +16,7 @@ export class WorkflowExecutor {
     async execute(task: TaskEntity): Promise<unknown> {
         const workflow = globalRegistry.get(task.workflow_name);
         if (!workflow) {
+            await this.taskRepo.fail(task.id, new Error(`Workflow "${task.workflow_name}" not found in registry`));
             throw new Error(`Workflow "${task.workflow_name}" not found in registry`);
         }
 
@@ -28,10 +29,14 @@ export class WorkflowExecutor {
             step: stepRunner
         };
 
-        const result = await workflow.handler(ctx);
-
-        await this.taskRepo.updateCompleted(task.id, result);
-        return result;
+        try {
+            const result = await workflow.handler(ctx);
+            await this.taskRepo.updateCompleted(task.id, result);
+            return result;
+        } catch (err) {
+            await this.taskRepo.fail(task.id, err);
+            throw err;
+        }
     }
 
     private createStepRunner(taskId: string): StepRunner {
@@ -44,7 +49,7 @@ export class WorkflowExecutor {
                     return JSON.parse(existing.output as unknown as string) as T;
                 }
 
-                const step = await this.stepRepo.create(taskId, name, null);
+                const step = await this.stepRepo.createOrFind(taskId, name, null);
                 console.log(`[step] ${name} - executing`);
 
                 try {

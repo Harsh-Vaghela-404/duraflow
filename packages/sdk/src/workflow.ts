@@ -9,8 +9,19 @@ export interface Workflow {
 
 class Registry {
     private workflows = new Map<string, Workflow>();
+    private static readonly NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
+    private static readonly MAX_NAME_LENGTH = 100;
 
     register(name: string, handler: WorkflowHandler): Workflow {
+        if (!name || name.length === 0) {
+            throw new Error('Workflow name cannot be empty');
+        }
+        if (name.length > Registry.MAX_NAME_LENGTH) {
+            throw new Error(`Workflow name exceeds maximum length of ${Registry.MAX_NAME_LENGTH} characters`);
+        }
+        if (!Registry.NAME_PATTERN.test(name)) {
+            throw new Error('Workflow name must contain only alphanumeric characters, dashes, and underscores');
+        }
         if (this.workflows.has(name)) {
             throw new Error(`Workflow "${name}" is already registered.`);
         }

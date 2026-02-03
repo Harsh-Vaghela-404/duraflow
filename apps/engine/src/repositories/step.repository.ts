@@ -12,6 +12,23 @@ export class StepRepository {
         return res?.rows[0];
     }
 
+    async createOrFind(taskId: string, stepKey: string, input: unknown): Promise<StepRunsEntity> {
+        const existing = await this.findByTaskAndKey(taskId, stepKey);
+        if (existing) {
+            return existing;
+        }
+
+        try {
+            return await this.create(taskId, stepKey, input);
+        } catch (err: any) {
+            if (err.code === '23505') {
+                const existingAfterConflict = await this.findByTaskAndKey(taskId, stepKey);
+                if (existingAfterConflict) return existingAfterConflict;
+            }
+            throw err;
+        }
+    }
+
     async findByTaskAndKey(taskId: string, stepKey: string): Promise<StepRunsEntity | null> {
         const res = await this.pool.query(
             'SELECT * FROM step_runs WHERE task_id = $1 AND step_key = $2 ORDER BY created_at DESC',

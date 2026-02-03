@@ -13,7 +13,6 @@ let reaper: Reaper | null = null;
 
 const taskRepo = new TaskRepository(pool);
 const heartbeat = new HeartbeatService(taskRepo);
-const leaderElector = new LeaderElector(pool);
 const executor = new WorkflowExecutor(pool);
 
 async function handleTask(task: TaskEntity): Promise<void> {
@@ -44,11 +43,8 @@ async function main() {
     const grpcServer = createGrpcServer();
     await startGrpcServer(grpcServer, 50051);
 
-    reaper = new Reaper(pool);
-
-    if (await leaderElector.tryBecomeLeader()) {
-        reaper.start();
-    }
+    reaper = new Reaper(pool, redis);
+    reaper.start();
 
     poller = new Poller(taskRepo, WORKER_ID, handleTask);
     poller.start();
@@ -61,9 +57,8 @@ async function shutdown(signal: string) {
 
     heartbeat.stop();
     if (poller) await poller.stop();
-    if (reaper) reaper.stop();
+    if (reaper) await reaper.stop();
 
-    await leaderElector.releaseLeaderShip();
     await pool.end();
     await redis.quit();
     console.log('[duraflow] shutdown complete');
@@ -72,6 +67,7 @@ async function shutdown(signal: string) {
 
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGUSR2', () => shutdown('SIGUSR2'));
 
 main().catch((err) => {
     console.error('[duraflow] fatal:', err);

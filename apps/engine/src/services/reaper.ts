@@ -1,5 +1,7 @@
 import { Pool } from 'pg';
+import { Redis } from 'ioredis';
 import { taskStatus } from '../db/task.entity';
+import { LeaderElector } from './leaderelector';
 
 export interface ReapedTask {
     id: string;
@@ -8,43 +10,54 @@ export interface ReapedTask {
     action: 'requeued' | 'failed';
 }
 
-// Recovers stale tasks from dead workers - runs as singleton
+// Recovers stale tasks from dead workers - runs as singleton via Redis leader election
 export class Reaper {
     private readonly intervalMs: number;
     private readonly staleThresholdSeconds: number;
     private intervalHandle: NodeJS.Timeout | null = null;
     private running: boolean = false;
+    private leaderElector: LeaderElector;
 
     constructor(
         private readonly pool: Pool,
+        redis: Redis,
         staleThresholdSeconds: number = 30,
         intervalMs: number = 10000
     ) {
         this.intervalMs = intervalMs;
         this.staleThresholdSeconds = staleThresholdSeconds;
+        this.leaderElector = new LeaderElector(redis);
     }
 
-    start(): void {
+    async start(): Promise<void> {
         if (this.running) {
             console.warn('[reaper] already running');
             return;
         }
 
+        const isLeader = await this.leaderElector.tryBecomeLeader();
+        if (!isLeader) {
+            console.log('[reaper] another instance is leader, skipping');
+            return;
+        }
+
         this.running = true;
-        console.log(`[reaper] started (interval: ${this.intervalMs}ms, stale threshold: ${this.staleThresholdSeconds}s)`);
+        console.log(`[reaper] started as leader (interval: ${this.intervalMs}ms, stale threshold: ${this.staleThresholdSeconds}s)`);
 
         this.reap();
         this.intervalHandle = setInterval(() => this.reap(), this.intervalMs);
     }
 
-    stop(): void {
+    async stop(): Promise<void> {
         this.running = false;
         if (this.intervalHandle) {
             clearInterval(this.intervalHandle);
             this.intervalHandle = null;
         }
-        console.log('[reaper] stopped');
+        await this.leaderElector.releaseLeadership();
+        console.log('[reaper] stopped and released leadership');
     }
+
 
     isRunning(): boolean {
         return this.running;
