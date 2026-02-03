@@ -21,8 +21,8 @@ export class Reaper {
     constructor(
         private readonly pool: Pool,
         redis: Redis,
-        staleThresholdSeconds: number = 30,
-        intervalMs: number = 10000
+        staleThresholdSeconds: number = 300,
+        intervalMs: number = 10_000
     ) {
         this.intervalMs = intervalMs;
         this.staleThresholdSeconds = staleThresholdSeconds;

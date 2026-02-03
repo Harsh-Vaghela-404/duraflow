@@ -4,7 +4,6 @@ import { TaskRepository } from './repositories/task.repository';
 import { Poller, HeartbeatService, Reaper, WorkflowExecutor } from './services';
 import { TaskEntity, taskStatus } from './db/task.entity';
 import { v7 as uuid } from 'uuid';
-import { LeaderElector } from './services/leaderelector';
 
 const WORKER_ID = `worker-${uuid().slice(0, 8)}`;
 
