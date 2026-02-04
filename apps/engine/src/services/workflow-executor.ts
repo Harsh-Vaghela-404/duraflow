@@ -1,5 +1,5 @@
 import { Pool } from 'pg';
-import { globalRegistry, WorkflowContext, StepRunner, StepOptions } from '@duraflow/sdk';
+import { globalRegistry, WorkflowContext, StepRunner, StepOptions, serialize, deserialize } from '@duraflow/sdk';
 import { StepRepository } from '../repositories/step.repository';
 import { TaskRepository } from '../repositories/task.repository';
 import { TaskEntity, taskStatus } from '../db/task.entity';
@@ -46,7 +46,8 @@ export class WorkflowExecutor {
 
                 if (existing?.status === 'completed') {
                     console.log(`[step] ${name} - cache hit`);
-                    return JSON.parse(existing.output as unknown as string) as T;
+                    const outputStr = JSON.stringify(existing.output);
+                    return deserialize(outputStr) as T;
                 }
 
                 const step = await this.stepRepo.createOrFind(taskId, name, null);
@@ -54,7 +55,8 @@ export class WorkflowExecutor {
 
                 try {
                     const result = await fn();
-                    await this.stepRepo.updateCompleted(step.id, JSON.stringify(result));
+                    const serializedStr = serialize(result);
+                    await this.stepRepo.updateCompleted(step.id, JSON.parse(serializedStr));
                     return result;
                 } catch (err) {
                     await this.stepRepo.updateFailed(step.id, String(err));
