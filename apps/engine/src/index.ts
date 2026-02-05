@@ -42,7 +42,9 @@ async function main() {
     const grpcServer = createGrpcServer();
     await startGrpcServer(grpcServer, 50051);
 
-    reaper = new Reaper(pool, redis);
+    const reaperStale = parseInt(process.env.REAPER_STALE_THRESHOLD || '300', 10);
+    const reaperInterval = parseInt(process.env.REAPER_INTERVAL || '10000', 10);
+    reaper = new Reaper(pool, redis, reaperStale, reaperInterval);
     reaper.start();
 
     poller = new Poller(taskRepo, WORKER_ID, handleTask);
