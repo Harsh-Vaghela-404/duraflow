@@ -2,7 +2,9 @@ import { Pool } from 'pg';
 import { globalRegistry, WorkflowContext, StepRunner, StepOptions, serialize, deserialize } from '@duraflow/sdk';
 import { StepRepository } from '../repositories/step.repository';
 import { TaskRepository } from '../repositories/task.repository';
-import { TaskEntity, taskStatus } from '../db/task.entity';
+import { TaskEntity } from '../db/task.entity';
+import { calculateBackOff } from "../utils/backoff";
+import { StepRetryError } from '../errors/step-retry.error';
 
 export class WorkflowExecutor {
     private stepRepo: StepRepository;
@@ -14,6 +16,7 @@ export class WorkflowExecutor {
     }
 
     async execute(task: TaskEntity): Promise<unknown> {
+        console.error(`[executor] Task ${task.id} started`);
         const workflow = globalRegistry.get(task.workflow_name);
         if (!workflow) {
             await this.taskRepo.fail(task.id, new Error(`Workflow "${task.workflow_name}" not found in registry`));
@@ -34,6 +37,15 @@ export class WorkflowExecutor {
             await this.taskRepo.updateCompleted(task.id, result);
             return result;
         } catch (err) {
+            if (err instanceof StepRetryError) {
+                console.log(
+                    `[executor] Task ${task.id} suspended for step retry. Resuming in ${err.delay}ms`
+                );
+                await this.taskRepo.scheduleRetry(task.id, err.delay, task.retry_count, err.originalError);
+                return;
+            }
+
+            console.error(`[executor] Task ${task.id} failed:`, err);
             await this.taskRepo.fail(task.id, err);
             throw err;
         }
@@ -51,7 +63,9 @@ export class WorkflowExecutor {
                 }
 
                 const step = await this.stepRepo.createOrFind(taskId, name, null);
-                console.log(`[step] ${name} - executing`);
+                // Respect persisted attempt count if any, else 1
+                const currentAttempt = step.attempt || 1;
+                console.log(`[step] ${name} - executing (attempt ${currentAttempt})`);
 
                 try {
                     const result = await fn();
@@ -59,6 +73,16 @@ export class WorkflowExecutor {
                     await this.stepRepo.updateCompleted(step.id, JSON.parse(serializedStr));
                     return result;
                 } catch (err) {
+                    const maxRetries = opts?.retries ?? 0;
+                    console.error(`[step] ${name} failed (attempt ${currentAttempt}/${maxRetries + 1}):`, err);
+
+                    if (currentAttempt <= maxRetries) {
+                        const delay = calculateBackOff(currentAttempt);
+                        await this.stepRepo.incrementAttempt(step.id);
+
+                        throw new StepRetryError(delay, currentAttempt + 1, err);
+                    }
+
                     await this.stepRepo.updateFailed(step.id, String(err));
                     throw err;
                 }

@@ -40,7 +40,8 @@ async function main() {
     console.log('[duraflow] redis connected');
 
     const grpcServer = createGrpcServer();
-    await startGrpcServer(grpcServer, 50051);
+    const port = parseInt(process.env.PORT || '50051', 10);
+    await startGrpcServer(grpcServer, port);
 
     const reaperStale = parseInt(process.env.REAPER_STALE_THRESHOLD || '300', 10);
     const reaperInterval = parseInt(process.env.REAPER_INTERVAL || '10000', 10);

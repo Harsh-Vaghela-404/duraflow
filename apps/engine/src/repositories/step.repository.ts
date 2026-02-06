@@ -6,7 +6,7 @@ export class StepRepository {
 
     async create(taskId: string, stepKey: string, input: unknown): Promise<StepRunsEntity> {
         const res = await this.pool.query(
-            'INSERT INTO step_runs (task_id, step_key, input) VALUES($1, $2, $3) RETURNING *',
+            'INSERT INTO step_runs (task_id, step_key, input, started_at) VALUES($1, $2, $3, NOW()) RETURNING *',
             [taskId, stepKey, input]
         );
         return res?.rows[0];
@@ -50,6 +50,15 @@ export class StepRepository {
             [error, stepStatus.FAILED, id]
         );
     }
+
+    async incrementAttempt(id: string): Promise<void> {
+        await this.pool.query(
+            'UPDATE step_runs SET attempt = attempt + 1 WHERE id = $1',
+            [id]
+        );
+    }
+
+
 
     async findByTaskId(taskId: string): Promise<StepRunsEntity[]> {
         const res = await this.pool.query(

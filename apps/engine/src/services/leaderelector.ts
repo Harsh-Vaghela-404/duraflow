@@ -1,7 +1,7 @@
 import { Redis } from 'ioredis';
 
 const LEADER_KEY = 'duraflow:reaper:leader';
-const LEADER_TTL_SECONDS = parseInt(process.env.LEADER_TTL_SECONDS);
+const LEADER_TTL_SECONDS = parseInt(process.env.LEADER_TTL_SECONDS || '30');
 
 export class LeaderElector {
     private workerId: string;

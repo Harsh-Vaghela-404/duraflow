@@ -72,4 +72,30 @@ export class TaskRepository {
         const res = await this.pool.query(query, [taskStatus.PENDING, batchSize, taskStatus.RUNNING, workerId]);
         return res?.rows || [];
     }
+
+    async scheduleRetry(id: string, delayMs: number, attempt: number, error: unknown): Promise<void> {
+        const errorObj = error instanceof Error
+            ? { message: error.message, name: error.name, stack: error.stack }
+            : { message: String(error) };
+
+            const query = `
+            UPDATE agent_tasks
+            SET
+                status = $1,
+                scheduled_at = NOW() + ($2 || ' milliseconds')::INTERVAL,
+                retry_count = $3,
+                error = $4,
+                heartbeat_at = NULL,
+                worker_id = NULL
+            WHERE id = $5
+        `;
+
+        await this.pool.query(query, [
+            taskStatus.PENDING,
+            delayMs,
+            attempt,
+            JSON.stringify(errorObj),
+            id
+        ]);
+    } 
 }

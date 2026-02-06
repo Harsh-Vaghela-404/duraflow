@@ -11,6 +11,7 @@ export interface StepRunsEntity {
     task_id: string;
     step_key: string;
     status: stepStatus;
+    attempt: number;
     input: Record<string, any>;
     output: Record<string, any>;
     error: Record<string, any>;
