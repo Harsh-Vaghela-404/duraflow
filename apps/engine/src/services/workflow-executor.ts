@@ -1,92 +1,154 @@
+import path from 'path';
+import os from 'os';
+import { MessageChannel } from 'worker_threads';
 import { Pool } from 'pg';
-import { globalRegistry, WorkflowContext, StepRunner, StepOptions, serialize, deserialize } from '@duraflow/sdk';
+import Piscina from 'piscina';
 import { StepRepository } from '../repositories/step.repository';
 import { TaskRepository } from '../repositories/task.repository';
 import { TaskEntity } from '../db/task.entity';
-import { calculateBackOff } from "../utils/backoff";
-import { StepRetryError } from '../errors/step-retry.error';
+
+interface IPCRequest {
+    id: string;
+    type: 'STEP_FIND' | 'STEP_CREATE_OR_FIND' | 'STEP_COMPLETE' | 'STEP_FAIL' | 'STEP_INCREMENT';
+    payload: Record<string, unknown>;
+}
+
+interface IPCResponse {
+    id: string;
+    success: boolean;
+    data?: unknown;
+    error?: { message: string; name: string };
+}
+
+interface StepRetryPayload {
+    __stepRetry: true;
+    delay: number;
+    attempt: number;
+    originalError: unknown;
+}
 
 export class WorkflowExecutor {
     private stepRepo: StepRepository;
     private taskRepo: TaskRepository;
+    private pool: Piscina;
 
-    constructor(pool: Pool) {
-        this.stepRepo = new StepRepository(pool);
-        this.taskRepo = new TaskRepository(pool);
+    constructor(dbPool: Pool) {
+        this.stepRepo = new StepRepository(dbPool);
+        this.taskRepo = new TaskRepository(dbPool);
+        this.pool = this.createPool();
+    }
+
+    private createPool(): Piscina {
+        const isTs = path.extname(__filename) === '.ts';
+        const workerExt = isTs ? '.ts' : '.js';
+        const workerPath = path.resolve(__dirname, `../workers/workflow.worker${workerExt}`);
+        const cpuCount = os.cpus().length;
+
+        const pool = new Piscina({
+            filename: workerPath,
+            execArgv: isTs ? ['--import', 'tsx'] : [],
+            maxThreads: Math.max(2, cpuCount - 1),
+            minThreads: 1,
+            maxQueue: 10000,
+            idleTimeout: 30000,
+            env: {
+                ...process.env,
+                DURAFLOW_WORKFLOWS: process.env.DURAFLOW_WORKFLOWS || ''
+            }
+        });
+
+        console.log(`[executor] Piscina pool: ${cpuCount - 1} threads, maxQueue=10000`);
+        return pool;
     }
 
     async execute(task: TaskEntity): Promise<unknown> {
-        console.error(`[executor] Task ${task.id} started`);
-        const workflow = globalRegistry.get(task.workflow_name);
-        if (!workflow) {
-            await this.taskRepo.fail(task.id, new Error(`Workflow "${task.workflow_name}" not found in registry`));
-            throw new Error(`Workflow "${task.workflow_name}" not found in registry`);
-        }
+        console.log(`[executor] Task ${task.id} submitted`);
 
-        const stepRunner = this.createStepRunner(task.id);
+        // Create MessageChannel for bidirectional IPC
+        const { port1, port2 } = new MessageChannel();
 
-        const ctx: WorkflowContext = {
-            runId: task.id,
-            workflowName: task.workflow_name,
-            input: task.input,
-            step: stepRunner
-        };
+        // Listen for IPC requests from worker
+        port1.on('message', async (request: IPCRequest) => {
+            const response = await this.handleWorkerMessage(request);
+            port1.postMessage(response);
+        });
 
         try {
-            const result = await workflow.handler(ctx);
+            const result = await this.pool.run(
+                {
+                    taskId: task.id,
+                    workflowName: task.workflow_name,
+                    input: task.input,
+                    port: port2
+                },
+                { transferList: [port2] }
+            );
+
             await this.taskRepo.updateCompleted(task.id, result);
+            console.log(`[executor] Task ${task.id} completed`);
             return result;
-        } catch (err) {
-            if (err instanceof StepRetryError) {
-                console.log(
-                    `[executor] Task ${task.id} suspended for step retry. Resuming in ${err.delay}ms`
-                );
-                await this.taskRepo.scheduleRetry(task.id, err.delay, task.retry_count, err.originalError);
+        } catch (err: unknown) {
+            if (this.isStepRetry(err)) {
+                console.log(`[executor] Task ${task.id} retry scheduled in ${err.delay}ms`);
+                await this.taskRepo.scheduleRetry(task.id, err.delay, err.attempt, err.originalError);
                 return;
             }
 
             console.error(`[executor] Task ${task.id} failed:`, err);
             await this.taskRepo.fail(task.id, err);
             throw err;
+        } finally {
+            port1.close();
         }
     }
 
-    private createStepRunner(taskId: string): StepRunner {
-        return {
-            run: async <T>(name: string, fn: () => Promise<T>, opts?: StepOptions): Promise<T> => {
-                const existing = await this.stepRepo.findByTaskAndKey(taskId, name);
+    private isStepRetry(err: unknown): err is StepRetryPayload {
+        return typeof err === 'object' && err !== null && '__stepRetry' in err;
+    }
 
-                if (existing?.status === 'completed') {
-                    console.log(`[step] ${name} - cache hit`);
-                    const outputStr = JSON.stringify(existing.output);
-                    return deserialize(outputStr) as T;
+    private async handleWorkerMessage(request: IPCRequest): Promise<IPCResponse> {
+        try {
+            switch (request.type) {
+                case 'STEP_FIND': {
+                    const { taskId, stepKey } = request.payload as { taskId: string; stepKey: string };
+                    const step = await this.stepRepo.findByTaskAndKey(taskId, stepKey);
+                    return { id: request.id, success: true, data: step };
                 }
-
-                const step = await this.stepRepo.createOrFind(taskId, name, null);
-                // Respect persisted attempt count if any, else 1
-                const currentAttempt = step.attempt || 1;
-                console.log(`[step] ${name} - executing (attempt ${currentAttempt})`);
-
-                try {
-                    const result = await fn();
-                    const serializedStr = serialize(result);
-                    await this.stepRepo.updateCompleted(step.id, JSON.parse(serializedStr));
-                    return result;
-                } catch (err) {
-                    const maxRetries = opts?.retries ?? 0;
-                    console.error(`[step] ${name} failed (attempt ${currentAttempt}/${maxRetries + 1}):`, err);
-
-                    if (currentAttempt <= maxRetries) {
-                        const delay = calculateBackOff(currentAttempt);
-                        await this.stepRepo.incrementAttempt(step.id);
-
-                        throw new StepRetryError(delay, currentAttempt + 1, err);
-                    }
-
-                    await this.stepRepo.updateFailed(step.id, String(err));
-                    throw err;
+                case 'STEP_CREATE_OR_FIND': {
+                    const { taskId, stepKey } = request.payload as { taskId: string; stepKey: string };
+                    const step = await this.stepRepo.createOrFind(taskId, stepKey, null);
+                    return { id: request.id, success: true, data: step };
                 }
+                case 'STEP_COMPLETE': {
+                    const { stepId, output } = request.payload as { stepId: string; output: unknown };
+                    await this.stepRepo.updateCompleted(stepId, output);
+                    return { id: request.id, success: true };
+                }
+                case 'STEP_FAIL': {
+                    const { stepId, error } = request.payload as { stepId: string; error: string };
+                    await this.stepRepo.updateFailed(stepId, error);
+                    return { id: request.id, success: true };
+                }
+                case 'STEP_INCREMENT': {
+                    const { stepId } = request.payload as { stepId: string };
+                    await this.stepRepo.incrementAttempt(stepId);
+                    return { id: request.id, success: true };
+                }
+                default:
+                    return { id: request.id, success: false, error: { message: 'Unknown message type', name: 'Error' } };
             }
-        };
+        } catch (err) {
+            const error = err instanceof Error ? { message: err.message, name: err.name } : { message: String(err), name: 'Error' };
+            return { id: request.id, success: false, error };
+        }
+    }
+
+    get queueSize(): number {
+        return this.pool.queueSize;
+    }
+
+    async destroy(): Promise<void> {
+        await this.pool.destroy();
+        console.log('[executor] Pool destroyed');
     }
 }

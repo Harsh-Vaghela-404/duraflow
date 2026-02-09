@@ -33,6 +33,10 @@ async function handleTask(task: TaskEntity): Promise<void> {
 async function main() {
     console.log('[duraflow] starting engine...');
 
+    if (!process.env.DURAFLOW_WORKFLOWS) {
+        console.warn('[duraflow] WARNING: DURAFLOW_WORKFLOWS is not set. Worker threads will not load any workflows.');
+    }
+
     await pool.query('SELECT 1');
     console.log('[duraflow] postgres connected');
 
@@ -60,6 +64,7 @@ async function shutdown(signal: string) {
     heartbeat.stop();
     if (poller) await poller.stop();
     if (reaper) await reaper.stop();
+    await executor.destroy();
 
     await pool.end();
     await redis.quit();

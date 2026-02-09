@@ -19,7 +19,11 @@ describe('Retry Logic Integration', () => {
     });
 
     afterAll(async () => {
-        if (worker) worker.kill();
+        if (worker) {
+            const exitPromise = new Promise(resolve => worker!.on('exit', resolve));
+            worker.kill();
+            await exitPromise;
+        }
         await pool.end();
     });
 
@@ -33,8 +37,15 @@ describe('Retry Logic Integration', () => {
         );
 
         // 2. Start Worker
+        const workflowPath = path.join(__dirname, 'workflows/crash-test/retry-workflow.ts');
+        console.log(`[test] Setting DURAFLOW_WORKFLOWS=${workflowPath}`);
+
         worker = spawn('node', [TSX_CLI, WORKER_SCRIPT], {
-            env: { ...process.env, PORT: '50059' },
+            env: {
+                ...process.env,
+                PORT: '50059',
+                DURAFLOW_WORKFLOWS: workflowPath
+            },
             shell: true,
             stdio: 'inherit'
         });
