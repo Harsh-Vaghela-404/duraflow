@@ -13,7 +13,8 @@ export class Poller {
         private readonly taskRepo: TaskRepository,
         private readonly workerId: string,
         private readonly onTaskReceived: (task: TaskEntity) => Promise<void>,
-        batchSize: number = 10
+        batchSize: number = 10,
+        private readonly checkBackpressure?: () => boolean
     ) {
         this.batchSize = batchSize;
     }
@@ -39,6 +40,14 @@ export class Poller {
 
     private async poll(): Promise<void> {
         if (!this.running) return;
+
+        if (this.checkBackpressure && this.checkBackpressure()) {
+            console.warn('[poller] backpressure detected, skipping poll');
+            if (this.running) {
+                this.currentTimeout = setTimeout(() => this.poll(), 1000);
+            }
+            return;
+        }
 
         try {
             const tasks = await this.taskRepo.dequeue(this.batchSize, this.workerId);

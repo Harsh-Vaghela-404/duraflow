@@ -1,7 +1,7 @@
 import { pool, redis } from './db';
 import { createGrpcServer, startGrpcServer } from './grpc/server';
 import { TaskRepository } from './repositories/task.repository';
-import { Poller, HeartbeatService, Reaper, WorkflowExecutor } from './services';
+import { Poller, HeartbeatService, Reaper, WorkflowExecutor, EventLoopMonitor } from './services';
 import { TaskEntity, taskStatus } from './db/task.entity';
 import { v7 as uuid } from 'uuid';
 
@@ -52,7 +52,27 @@ async function main() {
     reaper = new Reaper(pool, redis, reaperStale, reaperInterval);
     reaper.start();
 
-    poller = new Poller(taskRepo, WORKER_ID, handleTask);
+    // Backpressure configuration
+    const maxQueueSize = parseInt(process.env.MAX_QUEUE_SIZE || '1000', 10);
+    const maxEventLoopLag = parseInt(process.env.MAX_EVENT_LOOP_LAG || '100', 10);
+    const monitor = new EventLoopMonitor();
+
+    const checkBackpressure = () => {
+        const queueSize = executor.queueSize;
+        const lag = monitor.lag;
+
+        if (queueSize >= maxQueueSize) {
+            console.warn(`[backpressure] Queue size ${queueSize} >= ${maxQueueSize}`);
+            return true;
+        }
+        if (lag >= maxEventLoopLag) {
+            console.warn(`[backpressure] Event loop lag ${lag.toFixed(2)}ms >= ${maxEventLoopLag}ms`);
+            return true;
+        }
+        return false;
+    };
+
+    poller = new Poller(taskRepo, WORKER_ID, handleTask, 10, checkBackpressure);
     poller.start();
 
     console.log('[duraflow] engine ready');
