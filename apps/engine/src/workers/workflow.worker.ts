@@ -110,7 +110,10 @@ function createStepRunner(taskId: string, ipc: IPCClient): StepRunner {
                     throw new StepRetryError(delay, currentAttempt + 1, err);
                 }
 
-                await ipc.send('STEP_FAIL', { stepId: step.id, error: String(err) });
+                const errorObj = err instanceof Error
+                    ? { message: err.message, name: err.name, stack: err.stack }
+                    : { message: String(err) };
+                await ipc.send('STEP_FAIL', { stepId: step.id, error: errorObj });
                 throw err;
             }
         }

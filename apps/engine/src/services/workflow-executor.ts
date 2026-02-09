@@ -125,7 +125,7 @@ export class WorkflowExecutor {
                     return { id: request.id, success: true };
                 }
                 case 'STEP_FAIL': {
-                    const { stepId, error } = request.payload as { stepId: string; error: string };
+                    const { stepId, error } = request.payload as { stepId: string; error: unknown };
                     await this.stepRepo.updateFailed(stepId, error);
                     return { id: request.id, success: true };
                 }
