@@ -1,102 +1,121 @@
-import { pool, redis } from './db';
-import { createGrpcServer, startGrpcServer } from './grpc/server';
-import { TaskRepository } from './repositories/task.repository';
-import { Poller, HeartbeatService, Reaper, WorkflowExecutor, EventLoopMonitor } from './services';
-import { TaskEntity, taskStatus } from './db/task.entity';
-import { v7 as uuid } from 'uuid';
+import "dotenv/config";
+import { createPool, createRedis } from "./db";
+import { createGrpcServer, startGrpcServer } from "./grpc/server";
+import { TaskRepository } from "./repositories/task.repository";
+import {
+  Poller,
+  HeartbeatService,
+  Reaper,
+  WorkflowExecutor,
+  EventLoopMonitor,
+  createPiscinaPool,
+} from "./services";
+import { v7 as uuid } from "uuid";
+import { runTask } from "./task-runner";
 
-const WORKER_ID = `worker-${uuid().slice(0, 8)}`;
+const TAG = "[duraflow]";
 
-let poller: Poller | null = null;
-let reaper: Reaper | null = null;
+// Central Configuration
+const config = {
+  port: parseInt(process.env.PORT || "50051", 10),
+  reaperStale: parseInt(process.env.REAPER_STALE_THRESHOLD || "300", 10),
+  reaperInterval: parseInt(process.env.REAPER_INTERVAL || "10000", 10),
+  maxQueueSize: parseInt(process.env.MAX_QUEUE_SIZE || "1000", 10),
+  maxEventLoopLag: parseInt(process.env.MAX_EVENT_LOOP_LAG || "100", 10),
+  workerId: `worker-${uuid().slice(0, 8)}`,
+};
+
+// Wiring
+const pool = createPool();
+const redis = createRedis();
+const piscina = createPiscinaPool();
+
+pool.on("error", (err) => console.error(`${TAG} idle client error:`, err));
 
 const taskRepo = new TaskRepository(pool);
 const heartbeat = new HeartbeatService(taskRepo);
-const executor = new WorkflowExecutor(pool);
+const executor = new WorkflowExecutor(pool, piscina);
 
-async function handleTask(task: TaskEntity): Promise<void> {
-    console.log(`[worker] processing task ${task.id} (${task.workflow_name})`);
-    heartbeat.start(task.id);
-
-    try {
-        await executor.execute(task);
-        console.log(`[worker] completed task ${task.id}`);
-    } catch (err) {
-        console.error(`[worker] task ${task.id} failed:`, err);
-        await taskRepo.updateStatus(task.id, taskStatus.FAILED);
-        throw err;
-    } finally {
-        heartbeat.stop();
-    }
-}
+// Components
+let poller: Poller | null = null;
+let reaper: Reaper | null = null;
 
 async function main() {
-    console.log('[duraflow] starting engine...');
+  console.log(`${TAG} starting engine... (worker: ${config.workerId})`);
 
-    if (!process.env.DURAFLOW_WORKFLOWS) {
-        console.warn('[duraflow] WARNING: DURAFLOW_WORKFLOWS is not set. Worker threads will not load any workflows.');
+  if (!process.env.DURAFLOW_WORKFLOWS) {
+    console.warn(
+      `${TAG} WARNING: DURAFLOW_WORKFLOWS is not set. Worker threads will not load any workflows.`,
+    );
+  }
+
+  // Health checks
+  await pool.query("SELECT 1");
+  console.log(`${TAG} postgres connected`);
+
+  await redis.ping();
+  console.log(`${TAG} redis connected`);
+
+  // gRPC
+  const grpcServer = createGrpcServer(pool, redis);
+  await startGrpcServer(grpcServer, config.port);
+
+  // Reaper
+  reaper = new Reaper(pool, redis, config.reaperStale, config.reaperInterval);
+  await reaper.start(); // Fixed: Added await
+
+  // Backpressure
+  const monitor = new EventLoopMonitor();
+  const checkBackpressure = () => {
+    const queueSize = executor.queueSize;
+    const lag = monitor.lag;
+
+    if (queueSize >= config.maxQueueSize) {
+      console.warn(
+        `${TAG} [backpressure] Queue size ${queueSize} >= ${config.maxQueueSize}`,
+      );
+      return true;
     }
+    if (lag >= config.maxEventLoopLag) {
+      console.warn(
+        `${TAG} [backpressure] Event loop lag ${lag.toFixed(2)}ms >= ${config.maxEventLoopLag}ms`,
+      );
+      return true;
+    }
+    return false;
+  };
 
-    await pool.query('SELECT 1');
-    console.log('[duraflow] postgres connected');
+  // Poller
+  poller = new Poller(taskRepo, {
+    workerId: config.workerId,
+    batchSize: 10,
+    checkBackpressure,
+    onTaskReceived: (task) => runTask(executor, heartbeat, task),
+  });
+  poller.start();
 
-    await redis.ping();
-    console.log('[duraflow] redis connected');
-
-    const grpcServer = createGrpcServer();
-    const port = parseInt(process.env.PORT || '50051', 10);
-    await startGrpcServer(grpcServer, port);
-
-    const reaperStale = parseInt(process.env.REAPER_STALE_THRESHOLD || '300', 10);
-    const reaperInterval = parseInt(process.env.REAPER_INTERVAL || '10000', 10);
-    reaper = new Reaper(pool, redis, reaperStale, reaperInterval);
-    reaper.start();
-
-    // Backpressure configuration
-    const maxQueueSize = parseInt(process.env.MAX_QUEUE_SIZE || '1000', 10);
-    const maxEventLoopLag = parseInt(process.env.MAX_EVENT_LOOP_LAG || '100', 10);
-    const monitor = new EventLoopMonitor();
-
-    const checkBackpressure = () => {
-        const queueSize = executor.queueSize;
-        const lag = monitor.lag;
-
-        if (queueSize >= maxQueueSize) {
-            console.warn(`[backpressure] Queue size ${queueSize} >= ${maxQueueSize}`);
-            return true;
-        }
-        if (lag >= maxEventLoopLag) {
-            console.warn(`[backpressure] Event loop lag ${lag.toFixed(2)}ms >= ${maxEventLoopLag}ms`);
-            return true;
-        }
-        return false;
-    };
-
-    poller = new Poller(taskRepo, WORKER_ID, handleTask, 10, checkBackpressure);
-    poller.start();
-
-    console.log('[duraflow] engine ready');
+  console.log(`${TAG} engine ready`);
 }
 
 async function shutdown(signal: string) {
-    console.log(`[duraflow] ${signal} received, shutting down...`);
+  console.log(`${TAG} ${signal} received, shutting down...`);
 
-    heartbeat.stop();
-    if (poller) await poller.stop();
-    if (reaper) await reaper.stop();
-    await executor.destroy();
+  heartbeat.stopAll();
+  if (poller) await poller.stop();
+  if (reaper) await reaper.stop();
+  await executor.destroy();
 
-    await pool.end();
-    await redis.quit();
-    console.log('[duraflow] shutdown complete');
-    process.exit(0);
+  await pool.end();
+  await redis.quit();
+  console.log(`${TAG} shutdown complete`);
+  process.exit(0);
 }
 
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
-process.on('SIGUSR2', () => shutdown('SIGUSR2'));
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGUSR2", () => shutdown("SIGUSR2"));
 
 main().catch((err) => {
-    console.error('[duraflow] fatal:', err);
-    process.exit(1);
+  console.error(`${TAG} fatal:`, err);
+  process.exit(1);
 });

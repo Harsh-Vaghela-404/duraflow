@@ -1,42 +1,33 @@
 import { Redis } from 'ioredis';
 
 const LEADER_KEY = 'duraflow:reaper:leader';
-const LEADER_TTL_SECONDS = parseInt(process.env.LEADER_TTL_SECONDS || '30');
+const TAG = '[leader]';
 
 export class LeaderElector {
-    private workerId: string;
+    private readonly workerId: string;
     private renewalInterval: NodeJS.Timeout | null = null;
 
-    constructor(
-        private redis: Redis,
-        workerId?: string
-    ) {
+    constructor(private readonly redis: Redis, workerId?: string) {
         this.workerId = workerId || `worker-${process.pid}-${Date.now()}`;
     }
 
-    async tryBecomeLeader(): Promise<boolean> {
-        // SETNX with TTL - atomic operation
-        const result = await this.redis.set(
-            LEADER_KEY,
-            this.workerId,
-            'EX', LEADER_TTL_SECONDS,
-            'NX'
-        );
+    private get leaderTtl(): number {
+        return parseInt(process.env.LEADER_TTL_SECONDS || '30', 10);
+    }
 
+    async tryBecomeLeader(): Promise<boolean> {
+        const result = await this.redis.set(LEADER_KEY, this.workerId, 'EX', this.leaderTtl, 'NX');
         if (result === 'OK') {
             this.startRenewal();
+            console.log(`${TAG} ${this.workerId} elected as leader`);
             return true;
         }
-
-        // Check if we're already the leader (re-election after restart)
-        const currentLeader = await this.redis.get(LEADER_KEY);
-        return currentLeader === this.workerId;
+        return false;
     }
 
     async releaseLeadership(): Promise<void> {
         this.stopRenewal();
-
-        // Only release if we're the current leader (Lua script for atomicity)
+        // Lua script ensures only the current leader can delete the key
         const script = `
             if redis.call("get", KEYS[1]) == ARGV[1] then
                 return redis.call("del", KEYS[1])
@@ -44,27 +35,27 @@ export class LeaderElector {
                 return 0
             end
         `;
-
         await this.redis.eval(script, 1, LEADER_KEY, this.workerId);
+        console.log(`${TAG} ${this.workerId} released leadership`);
     }
 
     async isLeader(): Promise<boolean> {
-        const currentLeader = await this.redis.get(LEADER_KEY);
-        return currentLeader === this.workerId;
+        const current = await this.redis.get(LEADER_KEY);
+        return current === this.workerId;
     }
 
     private startRenewal(): void {
-        // Renew lock at half the TTL interval
-        const renewalMs = (LEADER_TTL_SECONDS * 1000) / 2;
+        const renewalMs = (this.leaderTtl * 1000) / 2;
 
         this.renewalInterval = setInterval(async () => {
             try {
                 const stillLeader = await this.renewLock();
                 if (!stillLeader) {
+                    console.warn(`${TAG} lost leadership, stopping renewal`);
                     this.stopRenewal();
                 }
-            } catch (error) {
-                console.error('Leader lock renewal failed:', error);
+            } catch (err) {
+                console.error(`${TAG} lock renewal failed:`, err);
             }
         }, renewalMs);
     }
@@ -77,7 +68,6 @@ export class LeaderElector {
     }
 
     private async renewLock(): Promise<boolean> {
-        // Only extend TTL if we're still the leader
         const script = `
             if redis.call("get", KEYS[1]) == ARGV[1] then
                 return redis.call("expire", KEYS[1], ARGV[2])
@@ -85,14 +75,7 @@ export class LeaderElector {
                 return 0
             end
         `;
-
-        const result = await this.redis.eval(
-            script, 1,
-            LEADER_KEY,
-            this.workerId,
-            LEADER_TTL_SECONDS
-        );
-
+        const result = await this.redis.eval(script, 1, LEADER_KEY, this.workerId, this.leaderTtl);
         return result === 1;
     }
 }

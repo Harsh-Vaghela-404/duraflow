@@ -1,14 +1,17 @@
 import * as grpc from '@grpc/grpc-js';
 import { ServerUnaryCall, sendUnaryData } from '@grpc/grpc-js';
+import { Pool } from 'pg';
 import { TaskRepository } from '../repositories/task.repository';
-import { StepRepository } from '../repositories/step.repository';
 import { taskStatus } from '../db/task.entity';
-import { pool } from '../db';
 
-const STATUS_MAP: Record<string, number> = { pending: 1, running: 2, completed: 3, failed: 4, cancelled: 5 };
+const TAG = '[grpc]';
 
 export class AgentServiceImpl {
-    private taskRepo = new TaskRepository(pool);
+    private taskRepo: TaskRepository;
+
+    constructor(pool: Pool) {
+        this.taskRepo = new TaskRepository(pool);
+    }
 
     async submitTask(call: ServerUnaryCall<any, any>, callback: sendUnaryData<any>) {
         try {
@@ -21,6 +24,7 @@ export class AgentServiceImpl {
             const task = await this.taskRepo.create(workflow_name, input ? JSON.parse(input.toString()) : {});
             callback(null, { task_id: task.id });
         } catch (err) {
+            console.error(`${TAG} submitTask error:`, err);
             callback({ code: grpc.status.INTERNAL, message: String(err) });
         }
     }
@@ -37,11 +41,12 @@ export class AgentServiceImpl {
             if (!task) return callback({ code: grpc.status.NOT_FOUND, message: 'Task not found' });
 
             callback(null, {
-                status: STATUS_MAP[task.status] || 0,
+                status: task.status.toUpperCase(),
                 output: task.output ? Buffer.from(JSON.stringify(task.output)) : Buffer.from(''),
-                error: task.error ? Buffer.from(JSON.stringify(task.error)) : Buffer.from('')
+                error: task.error ? Buffer.from(JSON.stringify(task.error)) : Buffer.from(''),
             });
         } catch (err) {
+            console.error(`${TAG} getTaskStatus error:`, err);
             callback({ code: grpc.status.INTERNAL, message: String(err) });
         }
     }
@@ -57,69 +62,17 @@ export class AgentServiceImpl {
             const task = await this.taskRepo.findById(task_id);
             if (!task) return callback({ code: grpc.status.NOT_FOUND, message: 'Task not found' });
 
-            if (task.status !== 'pending' && task.status !== 'running') {
+            if (task.status !== taskStatus.PENDING && task.status !== taskStatus.RUNNING) {
                 return callback({
                     code: grpc.status.FAILED_PRECONDITION,
-                    message: `Cannot cancel task with status: ${task.status}`
+                    message: `Cannot cancel task with status: ${task.status}`,
                 });
             }
 
             await this.taskRepo.updateStatus(task_id, taskStatus.CANCELLED);
             callback(null, { success: true });
         } catch (err) {
-            callback({ code: grpc.status.INTERNAL, message: String(err) });
-        }
-    }
-    async getStep(call: ServerUnaryCall<any, any>, callback: sendUnaryData<any>) {
-        try {
-            const { task_id, step_key } = call.request;
-            if (!task_id || !step_key) {
-                return callback({ code: grpc.status.INVALID_ARGUMENT, message: 'task_id and step_key are required' });
-            }
-
-            const stepRepo = new StepRepository(pool);
-            const step = await stepRepo.findByTaskAndKey(task_id, step_key);
-
-            callback(null, {
-                found: !!step,
-                completed: step?.status === 'completed',
-                output: step?.output ? Buffer.from(JSON.stringify(step.output)) : undefined
-            });
-        } catch (err) {
-            callback({ code: grpc.status.INTERNAL, message: String(err) });
-        }
-    }
-
-    async completeStep(call: ServerUnaryCall<any, any>, callback: sendUnaryData<any>) {
-        try {
-            const { task_id, step_key, output } = call.request;
-            if (!task_id || !step_key) {
-                return callback({ code: grpc.status.INVALID_ARGUMENT, message: 'task_id and step_key are required' });
-            }
-
-            const stepRepo = new StepRepository(pool);
-            const step = await stepRepo.createOrFind(task_id, step_key, null);
-            await stepRepo.updateCompleted(step.id, output ? JSON.parse(output.toString()) : null);
-
-            callback(null, { success: true });
-        } catch (err) {
-            callback({ code: grpc.status.INTERNAL, message: String(err) });
-        }
-    }
-
-    async failStep(call: ServerUnaryCall<any, any>, callback: sendUnaryData<any>) {
-        try {
-            const { task_id, step_key, error } = call.request;
-            if (!task_id || !step_key) {
-                return callback({ code: grpc.status.INVALID_ARGUMENT, message: 'task_id and step_key are required' });
-            }
-
-            const stepRepo = new StepRepository(pool);
-            const step = await stepRepo.createOrFind(task_id, step_key, null);
-            await stepRepo.updateFailed(step.id, error ? JSON.parse(error.toString()) : 'Unknown error');
-
-            callback(null, { success: true });
-        } catch (err) {
+            console.error(`${TAG} cancelTask error:`, err);
             callback({ code: grpc.status.INTERNAL, message: String(err) });
         }
     }
