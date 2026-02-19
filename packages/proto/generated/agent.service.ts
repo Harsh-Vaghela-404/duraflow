@@ -98,6 +98,41 @@ export interface CancelTaskResponse {
   success: boolean;
 }
 
+/** Step operations for memoization and crash recovery */
+export interface GetStepRequest {
+  taskId: string;
+  stepKey: string;
+}
+
+export interface GetStepResponse {
+  found: boolean;
+  completed: boolean;
+  /** JSON-encoded, only set if completed */
+  output: Uint8Array;
+}
+
+export interface CompleteStepRequest {
+  taskId: string;
+  stepKey: string;
+  /** JSON-encoded */
+  output: Uint8Array;
+}
+
+export interface CompleteStepResponse {
+  success: boolean;
+}
+
+export interface FailStepRequest {
+  taskId: string;
+  stepKey: string;
+  /** JSON-encoded */
+  error: Uint8Array;
+}
+
+export interface FailStepResponse {
+  success: boolean;
+}
+
 function createBaseSubmitTaskRequest(): SubmitTaskRequest {
   return { workflowName: "", input: new Uint8Array(0) };
 }
@@ -489,11 +524,470 @@ export const CancelTaskResponse = {
   },
 };
 
+function createBaseGetStepRequest(): GetStepRequest {
+  return { taskId: "", stepKey: "" };
+}
+
+export const GetStepRequest = {
+  encode(message: GetStepRequest, writer: _m0.Writer = _m0.Writer.create()): _m0.Writer {
+    if (message.taskId !== "") {
+      writer.uint32(10).string(message.taskId);
+    }
+    if (message.stepKey !== "") {
+      writer.uint32(18).string(message.stepKey);
+    }
+    return writer;
+  },
+
+  decode(input: _m0.Reader | Uint8Array, length?: number): GetStepRequest {
+    const reader = input instanceof _m0.Reader ? input : _m0.Reader.create(input);
+    let end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseGetStepRequest();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1:
+          if (tag !== 10) {
+            break;
+          }
+
+          message.taskId = reader.string();
+          continue;
+        case 2:
+          if (tag !== 18) {
+            break;
+          }
+
+          message.stepKey = reader.string();
+          continue;
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skipType(tag & 7);
+    }
+    return message;
+  },
+
+  fromJSON(object: any): GetStepRequest {
+    return {
+      taskId: isSet(object.taskId) ? globalThis.String(object.taskId) : "",
+      stepKey: isSet(object.stepKey) ? globalThis.String(object.stepKey) : "",
+    };
+  },
+
+  toJSON(message: GetStepRequest): unknown {
+    const obj: any = {};
+    if (message.taskId !== "") {
+      obj.taskId = message.taskId;
+    }
+    if (message.stepKey !== "") {
+      obj.stepKey = message.stepKey;
+    }
+    return obj;
+  },
+
+  create<I extends Exact<DeepPartial<GetStepRequest>, I>>(base?: I): GetStepRequest {
+    return GetStepRequest.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<GetStepRequest>, I>>(object: I): GetStepRequest {
+    const message = createBaseGetStepRequest();
+    message.taskId = object.taskId ?? "";
+    message.stepKey = object.stepKey ?? "";
+    return message;
+  },
+};
+
+function createBaseGetStepResponse(): GetStepResponse {
+  return { found: false, completed: false, output: new Uint8Array(0) };
+}
+
+export const GetStepResponse = {
+  encode(message: GetStepResponse, writer: _m0.Writer = _m0.Writer.create()): _m0.Writer {
+    if (message.found !== false) {
+      writer.uint32(8).bool(message.found);
+    }
+    if (message.completed !== false) {
+      writer.uint32(16).bool(message.completed);
+    }
+    if (message.output.length !== 0) {
+      writer.uint32(26).bytes(message.output);
+    }
+    return writer;
+  },
+
+  decode(input: _m0.Reader | Uint8Array, length?: number): GetStepResponse {
+    const reader = input instanceof _m0.Reader ? input : _m0.Reader.create(input);
+    let end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseGetStepResponse();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1:
+          if (tag !== 8) {
+            break;
+          }
+
+          message.found = reader.bool();
+          continue;
+        case 2:
+          if (tag !== 16) {
+            break;
+          }
+
+          message.completed = reader.bool();
+          continue;
+        case 3:
+          if (tag !== 26) {
+            break;
+          }
+
+          message.output = reader.bytes();
+          continue;
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skipType(tag & 7);
+    }
+    return message;
+  },
+
+  fromJSON(object: any): GetStepResponse {
+    return {
+      found: isSet(object.found) ? globalThis.Boolean(object.found) : false,
+      completed: isSet(object.completed) ? globalThis.Boolean(object.completed) : false,
+      output: isSet(object.output) ? bytesFromBase64(object.output) : new Uint8Array(0),
+    };
+  },
+
+  toJSON(message: GetStepResponse): unknown {
+    const obj: any = {};
+    if (message.found !== false) {
+      obj.found = message.found;
+    }
+    if (message.completed !== false) {
+      obj.completed = message.completed;
+    }
+    if (message.output.length !== 0) {
+      obj.output = base64FromBytes(message.output);
+    }
+    return obj;
+  },
+
+  create<I extends Exact<DeepPartial<GetStepResponse>, I>>(base?: I): GetStepResponse {
+    return GetStepResponse.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<GetStepResponse>, I>>(object: I): GetStepResponse {
+    const message = createBaseGetStepResponse();
+    message.found = object.found ?? false;
+    message.completed = object.completed ?? false;
+    message.output = object.output ?? new Uint8Array(0);
+    return message;
+  },
+};
+
+function createBaseCompleteStepRequest(): CompleteStepRequest {
+  return { taskId: "", stepKey: "", output: new Uint8Array(0) };
+}
+
+export const CompleteStepRequest = {
+  encode(message: CompleteStepRequest, writer: _m0.Writer = _m0.Writer.create()): _m0.Writer {
+    if (message.taskId !== "") {
+      writer.uint32(10).string(message.taskId);
+    }
+    if (message.stepKey !== "") {
+      writer.uint32(18).string(message.stepKey);
+    }
+    if (message.output.length !== 0) {
+      writer.uint32(26).bytes(message.output);
+    }
+    return writer;
+  },
+
+  decode(input: _m0.Reader | Uint8Array, length?: number): CompleteStepRequest {
+    const reader = input instanceof _m0.Reader ? input : _m0.Reader.create(input);
+    let end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseCompleteStepRequest();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1:
+          if (tag !== 10) {
+            break;
+          }
+
+          message.taskId = reader.string();
+          continue;
+        case 2:
+          if (tag !== 18) {
+            break;
+          }
+
+          message.stepKey = reader.string();
+          continue;
+        case 3:
+          if (tag !== 26) {
+            break;
+          }
+
+          message.output = reader.bytes();
+          continue;
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skipType(tag & 7);
+    }
+    return message;
+  },
+
+  fromJSON(object: any): CompleteStepRequest {
+    return {
+      taskId: isSet(object.taskId) ? globalThis.String(object.taskId) : "",
+      stepKey: isSet(object.stepKey) ? globalThis.String(object.stepKey) : "",
+      output: isSet(object.output) ? bytesFromBase64(object.output) : new Uint8Array(0),
+    };
+  },
+
+  toJSON(message: CompleteStepRequest): unknown {
+    const obj: any = {};
+    if (message.taskId !== "") {
+      obj.taskId = message.taskId;
+    }
+    if (message.stepKey !== "") {
+      obj.stepKey = message.stepKey;
+    }
+    if (message.output.length !== 0) {
+      obj.output = base64FromBytes(message.output);
+    }
+    return obj;
+  },
+
+  create<I extends Exact<DeepPartial<CompleteStepRequest>, I>>(base?: I): CompleteStepRequest {
+    return CompleteStepRequest.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<CompleteStepRequest>, I>>(object: I): CompleteStepRequest {
+    const message = createBaseCompleteStepRequest();
+    message.taskId = object.taskId ?? "";
+    message.stepKey = object.stepKey ?? "";
+    message.output = object.output ?? new Uint8Array(0);
+    return message;
+  },
+};
+
+function createBaseCompleteStepResponse(): CompleteStepResponse {
+  return { success: false };
+}
+
+export const CompleteStepResponse = {
+  encode(message: CompleteStepResponse, writer: _m0.Writer = _m0.Writer.create()): _m0.Writer {
+    if (message.success !== false) {
+      writer.uint32(8).bool(message.success);
+    }
+    return writer;
+  },
+
+  decode(input: _m0.Reader | Uint8Array, length?: number): CompleteStepResponse {
+    const reader = input instanceof _m0.Reader ? input : _m0.Reader.create(input);
+    let end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseCompleteStepResponse();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1:
+          if (tag !== 8) {
+            break;
+          }
+
+          message.success = reader.bool();
+          continue;
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skipType(tag & 7);
+    }
+    return message;
+  },
+
+  fromJSON(object: any): CompleteStepResponse {
+    return { success: isSet(object.success) ? globalThis.Boolean(object.success) : false };
+  },
+
+  toJSON(message: CompleteStepResponse): unknown {
+    const obj: any = {};
+    if (message.success !== false) {
+      obj.success = message.success;
+    }
+    return obj;
+  },
+
+  create<I extends Exact<DeepPartial<CompleteStepResponse>, I>>(base?: I): CompleteStepResponse {
+    return CompleteStepResponse.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<CompleteStepResponse>, I>>(object: I): CompleteStepResponse {
+    const message = createBaseCompleteStepResponse();
+    message.success = object.success ?? false;
+    return message;
+  },
+};
+
+function createBaseFailStepRequest(): FailStepRequest {
+  return { taskId: "", stepKey: "", error: new Uint8Array(0) };
+}
+
+export const FailStepRequest = {
+  encode(message: FailStepRequest, writer: _m0.Writer = _m0.Writer.create()): _m0.Writer {
+    if (message.taskId !== "") {
+      writer.uint32(10).string(message.taskId);
+    }
+    if (message.stepKey !== "") {
+      writer.uint32(18).string(message.stepKey);
+    }
+    if (message.error.length !== 0) {
+      writer.uint32(26).bytes(message.error);
+    }
+    return writer;
+  },
+
+  decode(input: _m0.Reader | Uint8Array, length?: number): FailStepRequest {
+    const reader = input instanceof _m0.Reader ? input : _m0.Reader.create(input);
+    let end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseFailStepRequest();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1:
+          if (tag !== 10) {
+            break;
+          }
+
+          message.taskId = reader.string();
+          continue;
+        case 2:
+          if (tag !== 18) {
+            break;
+          }
+
+          message.stepKey = reader.string();
+          continue;
+        case 3:
+          if (tag !== 26) {
+            break;
+          }
+
+          message.error = reader.bytes();
+          continue;
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skipType(tag & 7);
+    }
+    return message;
+  },
+
+  fromJSON(object: any): FailStepRequest {
+    return {
+      taskId: isSet(object.taskId) ? globalThis.String(object.taskId) : "",
+      stepKey: isSet(object.stepKey) ? globalThis.String(object.stepKey) : "",
+      error: isSet(object.error) ? bytesFromBase64(object.error) : new Uint8Array(0),
+    };
+  },
+
+  toJSON(message: FailStepRequest): unknown {
+    const obj: any = {};
+    if (message.taskId !== "") {
+      obj.taskId = message.taskId;
+    }
+    if (message.stepKey !== "") {
+      obj.stepKey = message.stepKey;
+    }
+    if (message.error.length !== 0) {
+      obj.error = base64FromBytes(message.error);
+    }
+    return obj;
+  },
+
+  create<I extends Exact<DeepPartial<FailStepRequest>, I>>(base?: I): FailStepRequest {
+    return FailStepRequest.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<FailStepRequest>, I>>(object: I): FailStepRequest {
+    const message = createBaseFailStepRequest();
+    message.taskId = object.taskId ?? "";
+    message.stepKey = object.stepKey ?? "";
+    message.error = object.error ?? new Uint8Array(0);
+    return message;
+  },
+};
+
+function createBaseFailStepResponse(): FailStepResponse {
+  return { success: false };
+}
+
+export const FailStepResponse = {
+  encode(message: FailStepResponse, writer: _m0.Writer = _m0.Writer.create()): _m0.Writer {
+    if (message.success !== false) {
+      writer.uint32(8).bool(message.success);
+    }
+    return writer;
+  },
+
+  decode(input: _m0.Reader | Uint8Array, length?: number): FailStepResponse {
+    const reader = input instanceof _m0.Reader ? input : _m0.Reader.create(input);
+    let end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseFailStepResponse();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1:
+          if (tag !== 8) {
+            break;
+          }
+
+          message.success = reader.bool();
+          continue;
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skipType(tag & 7);
+    }
+    return message;
+  },
+
+  fromJSON(object: any): FailStepResponse {
+    return { success: isSet(object.success) ? globalThis.Boolean(object.success) : false };
+  },
+
+  toJSON(message: FailStepResponse): unknown {
+    const obj: any = {};
+    if (message.success !== false) {
+      obj.success = message.success;
+    }
+    return obj;
+  },
+
+  create<I extends Exact<DeepPartial<FailStepResponse>, I>>(base?: I): FailStepResponse {
+    return FailStepResponse.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<FailStepResponse>, I>>(object: I): FailStepResponse {
+    const message = createBaseFailStepResponse();
+    message.success = object.success ?? false;
+    return message;
+  },
+};
+
 /** Task queue management */
 export interface AgentService {
   SubmitTask(request: SubmitTaskRequest): Promise<SubmitTaskResponse>;
   GetTaskStatus(request: GetTaskStatusRequest): Promise<GetTaskStatusResponse>;
   CancelTask(request: CancelTaskRequest): Promise<CancelTaskResponse>;
+  /** Step operations for SDK crash recovery */
+  GetStep(request: GetStepRequest): Promise<GetStepResponse>;
+  CompleteStep(request: CompleteStepRequest): Promise<CompleteStepResponse>;
+  FailStep(request: FailStepRequest): Promise<FailStepResponse>;
 }
 
 export const AgentServiceServiceName = "duraflow.AgentService";
@@ -506,6 +1000,9 @@ export class AgentServiceClientImpl implements AgentService {
     this.SubmitTask = this.SubmitTask.bind(this);
     this.GetTaskStatus = this.GetTaskStatus.bind(this);
     this.CancelTask = this.CancelTask.bind(this);
+    this.GetStep = this.GetStep.bind(this);
+    this.CompleteStep = this.CompleteStep.bind(this);
+    this.FailStep = this.FailStep.bind(this);
   }
   SubmitTask(request: SubmitTaskRequest): Promise<SubmitTaskResponse> {
     const data = SubmitTaskRequest.encode(request).finish();
@@ -523,6 +1020,24 @@ export class AgentServiceClientImpl implements AgentService {
     const data = CancelTaskRequest.encode(request).finish();
     const promise = this.rpc.request(this.service, "CancelTask", data);
     return promise.then((data) => CancelTaskResponse.decode(_m0.Reader.create(data)));
+  }
+
+  GetStep(request: GetStepRequest): Promise<GetStepResponse> {
+    const data = GetStepRequest.encode(request).finish();
+    const promise = this.rpc.request(this.service, "GetStep", data);
+    return promise.then((data) => GetStepResponse.decode(_m0.Reader.create(data)));
+  }
+
+  CompleteStep(request: CompleteStepRequest): Promise<CompleteStepResponse> {
+    const data = CompleteStepRequest.encode(request).finish();
+    const promise = this.rpc.request(this.service, "CompleteStep", data);
+    return promise.then((data) => CompleteStepResponse.decode(_m0.Reader.create(data)));
+  }
+
+  FailStep(request: FailStepRequest): Promise<FailStepResponse> {
+    const data = FailStepRequest.encode(request).finish();
+    const promise = this.rpc.request(this.service, "FailStep", data);
+    return promise.then((data) => FailStepResponse.decode(_m0.Reader.create(data)));
   }
 }
 
