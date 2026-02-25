@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import path from 'path';
 import {
   globalRegistry,
+  compensationRegistry,
   WorkflowContext,
   StepRunner,
   StepOptions,
@@ -120,12 +121,12 @@ class IPCClient {
   }
 }
 
-function createStepRunner(taskId: string, ipc: IPCClient): StepRunner {
+function createStepRunner(taskId: string, workflowName: string, ipc: IPCClient): StepRunner {
   return {
     async run<T>(
       name: string,
       fn: () => Promise<T>,
-      opts?: StepOptions,
+      opts?: StepOptions<T>,
     ): Promise<T> {
       const existing = await ipc.send<{ status: string; output: unknown } | null>('STEP_FIND', { taskId, stepKey: name });
       if (existing?.status === 'completed') {
@@ -137,11 +138,18 @@ function createStepRunner(taskId: string, ipc: IPCClient): StepRunner {
       const currentAttempt = step.attempt || 1;
       console.log(`[worker:step] ${name} - executing (attempt ${currentAttempt})`);
 
+      let compensationKey: string | undefined;
+      if (opts?.compensation) {
+        compensationKey = `${workflowName}:${name}`;
+        compensationRegistry.register(compensationKey, opts.compensation as (output: unknown) => Promise<void>);
+      }
+
       try {
         const result = await fn();
         await ipc.send('STEP_COMPLETE', {
           stepId: step.id,
           output: JSON.parse(serialize(result)),
+          compensationFn: compensationKey ?? null,
         });
         return result;
       } catch (err) {
@@ -175,7 +183,7 @@ module.exports = async function executeWorkflow(task: WorkerTask) {
       throw new Error(`Workflow "${workflowName}" not found. Registered: [${registered.join(', ')}]`);
     }
 
-    const stepRunner = createStepRunner(taskId, ipc);
+    const stepRunner = createStepRunner(taskId, workflowName, ipc);
     const ctx: WorkflowContext = {
       runId: taskId,
       workflowName,

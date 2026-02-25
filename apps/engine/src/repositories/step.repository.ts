@@ -31,10 +31,12 @@ export class StepRepository {
         return res.rows[0] || null;
     }
 
-    async updateCompleted(id: string, output: unknown): Promise<void> {
+    async updateCompleted(id: string, output: unknown, compensationFn?: string): Promise<void> {
         await this.pool.query(
-            'UPDATE step_runs SET output = $1, status = $2, completed_at = NOW() WHERE id = $3',
-            [output, stepStatus.COMPLETED, id],
+            `UPDATE step_runs
+             SET output = $1, status = $2, completed_at = NOW(), compensation_fn = $4
+             WHERE id = $3`,
+            [output, stepStatus.COMPLETED, id, compensationFn ?? null],
         );
     }
 

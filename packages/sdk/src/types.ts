@@ -6,11 +6,11 @@ export interface WorkflowContext {
 }
 
 export interface StepRunner {
-    run<T>(name: string, fn: () => Promise<T>, opts?: StepOptions): Promise<T>;
+    run<T>(name: string, fn: () => Promise<T>, opts?: StepOptions<T>): Promise<T>;
 }
 
-export interface StepOptions {
+export interface StepOptions<T = unknown> {
     retries?: number;
     timeout?: number;
-    compensation?: (output: unknown) => Promise<void>;
+    compensation?: (output: T) => Promise<void>;
 }

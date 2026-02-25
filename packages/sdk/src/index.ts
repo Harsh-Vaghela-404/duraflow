@@ -6,3 +6,4 @@
 export * from './types';
 export * from './workflow';
 export * from './utils/serialization';
+export * from './compensation';
