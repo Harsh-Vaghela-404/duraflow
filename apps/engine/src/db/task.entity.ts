@@ -4,6 +4,8 @@ export enum taskStatus {
     COMPLETED = 'completed',
     FAILED = 'failed',
     CANCELLED = 'cancelled',
+    ROLLED_BACK = 'rolled_back',
+    PARTIAL_ROLLBACK = 'partial_rollback',
 }
 
 export interface TaskEntity {

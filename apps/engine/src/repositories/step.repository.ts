@@ -58,4 +58,23 @@ export class StepRepository {
         );
         return res.rows;
     }
+
+    async findCompletedWithCompensation(taskId: string): Promise<StepRunsEntity[]> {
+        const res = await this.pool.query(
+            `SELECT * FROM step_runs
+             WHERE task_id = $1
+               AND status = $2
+               AND compensation_fn IS NOT NULL
+             ORDER BY completed_at DESC`,
+            [taskId, stepStatus.COMPLETED],
+        );
+        return res.rows;
+    }
+
+    async markCompensated(stepId: string): Promise<void> {
+        await this.pool.query(
+            'UPDATE step_runs SET compensated_at = NOW() WHERE id = $1',
+            [stepId],
+        );
+    }
 }
