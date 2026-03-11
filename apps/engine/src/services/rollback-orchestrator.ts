@@ -1,71 +1,114 @@
-import { Pool } from 'pg';
-import { compensationRegistry } from '@duraflow/sdk';
-import { StepRepository } from '../repositories/step.repository';
-import { TaskRepository } from '../repositories/task.repository';
-import { DeadLetterQueueRepository } from '../repositories/dlq.repository';
-import { taskStatus } from '../db/task.entity';
+import { Pool } from "pg";
+import { compensationRegistry } from "@duraflow/sdk";
+import { StepRepository } from "../repositories/step.repository";
+import { TaskRepository } from "../repositories/task.repository";
+import { DeadLetterQueueRepository } from "../repositories/dlq.repository";
+import { taskStatus } from "../db/task.entity";
 
-const TAG = '[rollback]';
+const TAG = "[rollback]";
 
 export interface RollbackResult {
-    taskId: string;
-    totalSteps: number;
-    compensated: number;
-    failed: number;
-    finalStatus: taskStatus.ROLLED_BACK | taskStatus.PARTIAL_ROLLBACK;
+  taskId: string;
+  totalSteps: number;
+  compensated: number;
+  failed: number;
+  finalStatus: taskStatus.ROLLED_BACK | taskStatus.PARTIAL_ROLLBACK;
 }
 
 export class RollbackOrchestrator {
-    private stepRepo: StepRepository;
-    private taskRepo: TaskRepository;
-    private dlqRepo: DeadLetterQueueRepository;
+  private stepRepo: StepRepository;
+  private taskRepo: TaskRepository;
+  private dlqRepo: DeadLetterQueueRepository;
 
-    constructor(pool: Pool) {
-        this.stepRepo = new StepRepository(pool);
-        this.taskRepo = new TaskRepository(pool);
-        this.dlqRepo = new DeadLetterQueueRepository(pool);
+  constructor(pool: Pool) {
+    this.stepRepo = new StepRepository(pool);
+    this.taskRepo = new TaskRepository(pool);
+    this.dlqRepo = new DeadLetterQueueRepository(pool);
+  }
+
+  async rollback(taskId: string): Promise<RollbackResult> {
+    const steps = await this.stepRepo.findCompletedWithCompensation(taskId);
+
+    if (steps.length === 0) {
+      console.log(`${TAG} task ${taskId} — no compensatable steps found`);
+      await this.taskRepo.updateStatus(taskId, taskStatus.ROLLED_BACK);
+      return {
+        taskId,
+        totalSteps: 0,
+        compensated: 0,
+        failed: 0,
+        finalStatus: taskStatus.ROLLED_BACK,
+      };
     }
 
-    async rollback(taskId: string): Promise<RollbackResult> {
-        const steps = await this.stepRepo.findCompletedWithCompensation(taskId);
+    console.log(
+      `${TAG} task ${taskId} — rolling back ${steps.length} steps (LIFO)`,
+    );
+    let compensated = 0;
+    let failed = 0;
 
-        if (steps.length === 0) {
-            console.log(`${TAG} task ${taskId} — no compensatable steps found`);
-            await this.taskRepo.updateStatus(taskId, taskStatus.ROLLED_BACK);
-            return { taskId, totalSteps: 0, compensated: 0, failed: 0, finalStatus: taskStatus.ROLLED_BACK };
-        }
+    for (const step of steps) {
+      const fnName = step.compensation_fn!;
+      const fn = compensationRegistry.get(fnName);
 
-        console.log(`${TAG} task ${taskId} — rolling back ${steps.length} steps (LIFO)`);
-        let compensated = 0;
-        let failed = 0;
+      if (!fn) {
+        const errorContext = {
+          taskId,
+          stepId: step.id,
+          stepKey: step.step_key,
+          compensationFn: fnName,
+          error: {
+            message: `Compensation function "${fnName}" not found in registry`,
+          },
+        };
+        console.error(
+          `${TAG} step ${step.id} — compensation "${fnName}" not found in registry:`,
+          errorContext,
+        );
+        await this.dlqRepo.insert(taskId, step.id, errorContext);
+        failed++;
+        continue;
+      }
 
-        for (const step of steps) {
-            const fnName = step.compensation_fn!;
-            const fn = compensationRegistry.get(fnName);
-
-            if (!fn) {
-                console.error(`${TAG} step ${step.id} — compensation "${fnName}" not found in registry`);
-                await this.dlqRepo.insert(taskId, step.id, { message: `Compensation function "${fnName}" not found in registry` });
-                failed++;
-                continue;
-            }
-
-            try {
-                await fn(step.output);
-                await this.stepRepo.markCompensated(step.id);
-                compensated++;
-                console.log(`${TAG} step ${step.id} (${step.step_key}) — compensated`);
-            } catch (err) {
-                console.error(`${TAG} step ${step.id} (${step.step_key}) — compensation failed:`, err);
-                await this.dlqRepo.insert(taskId, step.id, err);
-                failed++;
-            }
-        }
-
-        const finalStatus = failed > 0 ? taskStatus.PARTIAL_ROLLBACK : taskStatus.ROLLED_BACK;
-        await this.taskRepo.updateStatus(taskId, finalStatus);
-        console.log(`${TAG} task ${taskId} — ${finalStatus} (${compensated}/${steps.length} compensated, ${failed} failed)`);
-
-        return { taskId, totalSteps: steps.length, compensated, failed, finalStatus };
+      try {
+        await fn(step.output);
+        await this.stepRepo.markCompensated(step.id);
+        compensated++;
+        console.log(`${TAG} step ${step.id} (${step.step_key}) — compensated`);
+      } catch (err) {
+        const errorContext = {
+          taskId,
+          stepId: step.id,
+          stepKey: step.step_key,
+          compensationFn: fnName,
+          stepOutput: step.output,
+          error:
+            err instanceof Error
+              ? { message: err.message, name: err.name, stack: err.stack }
+              : String(err),
+        };
+        console.error(
+          `${TAG} failed to compensate step ${step.id} (${step.step_key}):`,
+          errorContext,
+        );
+        await this.dlqRepo.insert(taskId, step.id, errorContext);
+        failed++;
+      }
     }
+
+    const finalStatus =
+      failed > 0 ? taskStatus.PARTIAL_ROLLBACK : taskStatus.ROLLED_BACK;
+    await this.taskRepo.updateStatus(taskId, finalStatus);
+    console.log(
+      `${TAG} task ${taskId} — ${finalStatus} (${compensated}/${steps.length} compensated, ${failed} failed)`,
+    );
+
+    return {
+      taskId,
+      totalSteps: steps.length,
+      compensated,
+      failed,
+      finalStatus,
+    };
+  }
 }
