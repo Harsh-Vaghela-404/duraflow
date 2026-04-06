@@ -7,6 +7,12 @@ import { taskStatus } from "../db/task.entity";
 
 const TAG = "[rollback]";
 
+const DEFAULT_COMPENSATION_TIMEOUT_MS = 30000;
+
+export interface RollbackOptions {
+  compensationTimeoutMs?: number;
+}
+
 export interface RollbackResult {
   taskId: string;
   totalSteps: number;
@@ -19,14 +25,21 @@ export class RollbackOrchestrator {
   private stepRepo: StepRepository;
   private taskRepo: TaskRepository;
   private dlqRepo: DeadLetterQueueRepository;
+  private defaultTimeout: number;
 
-  constructor(pool: Pool) {
+  constructor(pool: Pool, options?: { compensationTimeoutMs?: number }) {
     this.stepRepo = new StepRepository(pool);
     this.taskRepo = new TaskRepository(pool);
     this.dlqRepo = new DeadLetterQueueRepository(pool);
+    this.defaultTimeout =
+      options?.compensationTimeoutMs ?? DEFAULT_COMPENSATION_TIMEOUT_MS;
   }
 
-  async rollback(taskId: string): Promise<RollbackResult> {
+  async rollback(
+    taskId: string,
+    options?: RollbackOptions,
+  ): Promise<RollbackResult> {
+    const timeoutMs = options?.compensationTimeoutMs ?? this.defaultTimeout;
     const steps = await this.stepRepo.findCompletedWithCompensation(taskId);
 
     if (steps.length === 0) {
@@ -71,19 +84,25 @@ export class RollbackOrchestrator {
       }
 
       try {
-        await fn(step.output);
+        await this.executeWithTimeout(fn, step.output, timeoutMs);
         await this.stepRepo.markCompensated(step.id);
         compensated++;
         console.log(`${TAG} step ${step.id} (${step.step_key}) — compensated`);
       } catch (err) {
+        const isTimeout =
+          err instanceof Error && err.message === "Compensation timeout";
         const errorContext = {
           taskId,
           stepId: step.id,
           stepKey: step.step_key,
           compensationFn: fnName,
           stepOutput: step.output,
-          error:
-            err instanceof Error
+          error: isTimeout
+            ? {
+                message: `Compensation timed out after ${timeoutMs}ms`,
+                name: "TimeoutError",
+              }
+            : err instanceof Error
               ? { message: err.message, name: err.name, stack: err.stack }
               : String(err),
         };
@@ -110,5 +129,27 @@ export class RollbackOrchestrator {
       failed,
       finalStatus,
     };
+  }
+
+  private async executeWithTimeout<T>(
+    fn: (output: unknown) => Promise<T>,
+    output: unknown,
+    timeoutMs: number,
+  ): Promise<T> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error("Compensation timeout"));
+      }, timeoutMs);
+
+      fn(output)
+        .then((result) => {
+          clearTimeout(timer);
+          resolve(result);
+        })
+        .catch((err) => {
+          clearTimeout(timer);
+          reject(err);
+        });
+    });
   }
 }

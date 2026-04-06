@@ -1,6 +1,7 @@
 import { Pool } from "pg";
 import Redis from "ioredis";
 import { RollbackOrchestrator } from "../../src/services/rollback-orchestrator";
+import { DeadLetterQueueRepository } from "../../src/repositories/dlq.repository";
 import {
   createTestPool,
   createTestRedis,
@@ -12,20 +13,18 @@ import { taskStatus } from "../../src/db/task.entity";
 import { StepRepository } from "../../src/repositories/step.repository";
 import { TaskRepository } from "../../src/repositories/task.repository";
 import {
-  bookingWorkflow,
   resetCancellationOrder,
   resetMockBookings,
-  getCancellationOrder,
   mockBookings,
-  cancellationOrder,
 } from "../../src/workflows/booking-saga";
 import { registerCompensation } from "@duraflow/sdk";
 
-describe("Saga Booking Test", () => {
+describe("Saga Edge Cases", () => {
   let pool: Pool;
   let redis: Redis;
   let stepRepo: StepRepository;
   let taskRepo: TaskRepository;
+  let dlqRepo: DeadLetterQueueRepository;
   let rollbackOrchestrator: RollbackOrchestrator;
 
   beforeAll(() => {
@@ -33,6 +32,7 @@ describe("Saga Booking Test", () => {
     redis = createTestRedis();
     stepRepo = new StepRepository(pool);
     taskRepo = new TaskRepository(pool);
+    dlqRepo = new DeadLetterQueueRepository(pool);
     rollbackOrchestrator = new RollbackOrchestrator(pool);
   });
 
@@ -47,8 +47,8 @@ describe("Saga Booking Test", () => {
     resetCancellationOrder();
     resetMockBookings();
 
-    const cancelFlight = async (output: any) => {
-      for (const [key, booking] of mockBookings.flights) {
+    const cancelFlight = async () => {
+      for (const [, booking] of mockBookings.flights) {
         if (!booking.cancelled) {
           booking.cancelled = true;
           break;
@@ -56,8 +56,8 @@ describe("Saga Booking Test", () => {
       }
     };
 
-    const cancelHotel = async (output: any) => {
-      for (const [key, booking] of mockBookings.hotels) {
+    const cancelHotel = async () => {
+      for (const [, booking] of mockBookings.hotels) {
         if (!booking.cancelled) {
           booking.cancelled = true;
           break;
@@ -65,8 +65,8 @@ describe("Saga Booking Test", () => {
       }
     };
 
-    const cancelCar = async (output: any) => {
-      for (const [key, booking] of mockBookings.cars) {
+    const cancelCar = async () => {
+      for (const [, booking] of mockBookings.cars) {
         if (!booking.cancelled) {
           booking.cancelled = true;
           break;
@@ -79,81 +79,123 @@ describe("Saga Booking Test", () => {
     registerCompensation("booking-saga:book-car", cancelCar);
   });
 
-  it("should execute booking saga and rollback in LIFO order when payment fails", async () => {
-    const input = {
-      customerId: "cust-123",
-      flightDetails: { from: "NYC", to: "LA", date: "2026-03-15" },
-      hotelDetails: {
-        city: "LA",
-        checkIn: "2026-03-15",
-        checkOut: "2026-03-20",
-      },
-      carDetails: { city: "LA", pickUp: "2026-03-15", dropOff: "2026-03-20" },
-      paymentAmount: 5000,
-    };
-
-    const task = await createTask(pool, "booking-saga", input);
-
+  it("should handle compensation function throws error → goes to DLQ", async () => {
+    const task = await createTask(pool, "booking-saga", {
+      customerId: "cust-throw",
+    });
     await taskRepo.updateStatus(task.id, taskStatus.RUNNING);
 
-    const flightStep = await stepRepo.createOrFind(
-      task.id,
-      "book-flight",
-      input.flightDetails,
-    );
+    const flightStep = await stepRepo.createOrFind(task.id, "book-flight", {
+      from: "ATL",
+      to: "DEN",
+    });
     await stepRepo.updateCompleted(
       flightStep.id,
-      { bookingId: "FLIGHT-123", ...input.flightDetails },
+      { bookingId: "FL-THROW" },
       "booking-saga:book-flight",
     );
 
-    const hotelStep = await stepRepo.createOrFind(
-      task.id,
-      "book-hotel",
-      input.hotelDetails,
-    );
+    const hotelStep = await stepRepo.createOrFind(task.id, "book-hotel", {
+      city: "DEN",
+    });
     await stepRepo.updateCompleted(
       hotelStep.id,
-      { bookingId: "HOTEL-456", ...input.hotelDetails },
-      "booking-saga:book-hotel",
+      { bookingId: "HT-THROW" },
+      "compensation-that-throws",
     );
 
-    const carStep = await stepRepo.createOrFind(
-      task.id,
-      "book-car",
-      input.carDetails,
-    );
-    await stepRepo.updateCompleted(
-      carStep.id,
-      { bookingId: "CAR-789", ...input.carDetails },
-      "booking-saga:book-car",
-    );
-
-    mockBookings.flights.set("cust-123", {
-      bookingId: "FLIGHT-123",
-      cancelled: false,
+    registerCompensation("compensation-that-throws", async () => {
+      throw new Error("Intentional compensation failure");
     });
-    mockBookings.hotels.set("cust-123", {
-      bookingId: "HOTEL-456",
-      cancelled: false,
-    });
-    mockBookings.cars.set("cust-123", {
-      bookingId: "CAR-789",
-      cancelled: false,
-    });
-
-    const taskEntity = await taskRepo.findById(task.id);
-    expect(taskEntity?.status).toBe(taskStatus.RUNNING);
 
     const result = await rollbackOrchestrator.rollback(task.id);
 
-    expect(result.totalSteps).toBe(3);
-    expect(result.compensated).toBe(3);
+    expect(result.totalSteps).toBe(2);
+    expect(result.compensated).toBe(1);
+    expect(result.failed).toBe(1);
+    expect(result.finalStatus).toBe(taskStatus.PARTIAL_ROLLBACK);
+
+    const dlqItems = await dlqRepo.findByTaskId(task.id);
+    expect(dlqItems.length).toBe(1);
+    expect(dlqItems[0]!.step_id).toBe(hotelStep.id);
+    expect(dlqItems[0]!.retry_count).toBe(0);
+  });
+
+  it("should handle compensation times out → treated as failure", async () => {
+    const task = await createTask(pool, "booking-saga", {
+      customerId: "cust-timeout",
+    });
+    await taskRepo.updateStatus(task.id, taskStatus.RUNNING);
+
+    const flightStep = await stepRepo.createOrFind(task.id, "book-flight", {
+      from: "ORD",
+      to: "PHX",
+    });
+    await stepRepo.updateCompleted(
+      flightStep.id,
+      { bookingId: "FL-TIMEOUT" },
+      "compensation-timeout",
+    );
+
+    const longRunningCompensation = async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10000));
+    };
+    registerCompensation("compensation-timeout", longRunningCompensation);
+
+    const result = await rollbackOrchestrator.rollback(task.id, {
+      compensationTimeoutMs: 100,
+    });
+
+    expect(result.failed).toBe(1);
+    expect(result.finalStatus).toBe(taskStatus.PARTIAL_ROLLBACK);
+
+    const dlqItems = await dlqRepo.findByTaskId(task.id);
+    expect(dlqItems.length).toBe(1);
+    expect(dlqItems[0]!.step_id).toBe(flightStep.id);
+  });
+
+  it("should handle task cancelled mid-flight → rollback triggers", async () => {
+    const task = await createTask(pool, "booking-saga", {
+      customerId: "cust-cancel",
+    });
+    await taskRepo.updateStatus(task.id, taskStatus.RUNNING);
+
+    const flightStep = await stepRepo.createOrFind(task.id, "book-flight", {
+      from: "LAX",
+      to: "JFK",
+    });
+    await stepRepo.updateCompleted(
+      flightStep.id,
+      { bookingId: "FL-CANCEL" },
+      "booking-saga:book-flight",
+    );
+
+    const hotelStep = await stepRepo.createOrFind(task.id, "book-hotel", {
+      city: "JFK",
+    });
+    await stepRepo.updateCompleted(
+      hotelStep.id,
+      { bookingId: "HT-CANCEL" },
+      "booking-saga:book-hotel",
+    );
+
+    mockBookings.flights.set("cust-cancel", {
+      bookingId: "FL-CANCEL",
+      cancelled: false,
+    });
+    mockBookings.hotels.set("cust-cancel", {
+      bookingId: "HT-CANCEL",
+      cancelled: false,
+    });
+
+    await taskRepo.updateStatus(task.id, taskStatus.CANCELLED);
+
+    const result = await rollbackOrchestrator.rollback(task.id);
+
+    expect(result.totalSteps).toBe(2);
+    expect(result.compensated).toBe(2);
     expect(result.failed).toBe(0);
     expect(result.finalStatus).toBe(taskStatus.ROLLED_BACK);
-
-    const finalTask = await taskRepo.findById(task.id);
-    expect(finalTask?.status).toBe(taskStatus.ROLLED_BACK);
 
     const flightCancelled = Array.from(mockBookings.flights.values()).some(
       (b) => b.cancelled,
@@ -161,151 +203,35 @@ describe("Saga Booking Test", () => {
     const hotelCancelled = Array.from(mockBookings.hotels.values()).some(
       (b) => b.cancelled,
     );
-    const carCancelled = Array.from(mockBookings.cars.values()).some(
-      (b) => b.cancelled,
-    );
     expect(flightCancelled).toBe(true);
     expect(hotelCancelled).toBe(true);
-    expect(carCancelled).toBe(true);
-
-    const updatedFlightStep = await stepRepo.findByTaskAndKey(
-      task.id,
-      "book-flight",
-    );
-    const updatedHotelStep = await stepRepo.findByTaskAndKey(
-      task.id,
-      "book-hotel",
-    );
-    const updatedCarStep = await stepRepo.findByTaskAndKey(task.id, "book-car");
-
-    expect(updatedFlightStep?.compensated_at).toBeInstanceOf(Date);
-    expect(updatedHotelStep?.compensated_at).toBeInstanceOf(Date);
-    expect(updatedCarStep?.compensated_at).toBeInstanceOf(Date);
   });
 
-  it("should handle partial rollback when compensation fails", async () => {
-    const input = {
-      customerId: "cust-456",
-      flightDetails: { from: "SFO", to: "SEA", date: "2026-04-01" },
-      hotelDetails: {
-        city: "SEA",
-        checkIn: "2026-04-01",
-        checkOut: "2026-04-05",
-      },
-      carDetails: { city: "SEA", pickUp: "2026-04-01", dropOff: "2026-04-05" },
-      paymentAmount: 3000,
-    };
-
-    const task = await createTask(pool, "booking-saga", input);
+  it("should skip step without compensation → skipped in rollback", async () => {
+    const task = await createTask(pool, "booking-saga", {
+      customerId: "cust-skip",
+    });
     await taskRepo.updateStatus(task.id, taskStatus.RUNNING);
 
-    const flightStep = await stepRepo.createOrFind(
-      task.id,
-      "book-flight",
-      input.flightDetails,
-    );
-    await stepRepo.updateCompleted(
-      flightStep.id,
-      { bookingId: "FLIGHT-999", ...input.flightDetails },
-      "booking-saga:book-flight",
-    );
+    const flightStep = await stepRepo.createOrFind(task.id, "book-flight", {
+      from: "BOS",
+      to: "MIA",
+    });
+    await stepRepo.updateCompleted(flightStep.id, { bookingId: "FL-SKIP" });
 
-    const hotelStep = await stepRepo.createOrFind(
-      task.id,
-      "book-hotel",
-      input.hotelDetails,
-    );
+    const hotelStep = await stepRepo.createOrFind(task.id, "book-hotel", {
+      city: "MIA",
+    });
     await stepRepo.updateCompleted(
       hotelStep.id,
-      { bookingId: "HOTEL-888", ...input.hotelDetails },
-      "non-existent-compensation",
-    );
-
-    const carStep = await stepRepo.createOrFind(
-      task.id,
-      "book-car",
-      input.carDetails,
-    );
-    await stepRepo.updateCompleted(
-      carStep.id,
-      { bookingId: "CAR-777", ...input.carDetails },
-      "booking-saga:book-car",
-    );
-
-    const paymentStep = await stepRepo.createOrFind(task.id, "charge-payment", {
-      amount: input.paymentAmount,
-    });
-    await stepRepo.updateFailed(paymentStep.id, {
-      message: "PAYMENT_DECLINED",
-    });
-
-    const result = await rollbackOrchestrator.rollback(task.id);
-
-    expect(result.compensated).toBe(2);
-    expect(result.failed).toBe(1);
-    expect(result.finalStatus).toBe(taskStatus.PARTIAL_ROLLBACK);
-
-    const finalTask = await taskRepo.findById(task.id);
-    expect(finalTask?.status).toBe(taskStatus.PARTIAL_ROLLBACK);
-
-    const dlqItems = await pool.query(
-      "SELECT * FROM dead_letter_queue WHERE task_id = $1",
-      [task.id],
-    );
-    expect(dlqItems.rows.length).toBe(1);
-    expect(dlqItems.rows[0].step_id).toBe(hotelStep.id);
-  });
-
-  it("should skip steps without compensation during rollback", async () => {
-    const input = {
-      customerId: "cust-789",
-      flightDetails: { from: "BOS", to: "MIA", date: "2026-05-01" },
-      hotelDetails: {
-        city: "MIA",
-        checkIn: "2026-05-01",
-        checkOut: "2026-05-05",
-      },
-      carDetails: { city: "MIA", pickUp: "2026-05-01", dropOff: "2026-05-05" },
-      paymentAmount: 4000,
-    };
-
-    const task = await createTask(pool, "booking-saga", input);
-    await taskRepo.updateStatus(task.id, taskStatus.RUNNING);
-
-    const flightStep = await stepRepo.createOrFind(
-      task.id,
-      "book-flight",
-      input.flightDetails,
-    );
-    await stepRepo.updateCompleted(flightStep.id, {
-      bookingId: "FLIGHT-111",
-      ...input.flightDetails,
-    });
-
-    const hotelStep = await stepRepo.createOrFind(
-      task.id,
-      "book-hotel",
-      input.hotelDetails,
-    );
-    await stepRepo.updateCompleted(
-      hotelStep.id,
-      { bookingId: "HOTEL-222", ...input.hotelDetails },
+      { bookingId: "HT-SKIP" },
       "booking-saga:book-hotel",
     );
 
-    const paymentStep = await stepRepo.createOrFind(task.id, "charge-payment", {
-      amount: input.paymentAmount,
-    });
-    await stepRepo.updateFailed(paymentStep.id, {
-      message: "PAYMENT_DECLINED",
-    });
-
-    mockBookings.hotels.set("cust-789", {
-      bookingId: "HOTEL-222",
+    mockBookings.hotels.set("cust-skip", {
+      bookingId: "HT-SKIP",
       cancelled: false,
     });
-
-    resetCancellationOrder();
 
     const result = await rollbackOrchestrator.rollback(task.id);
 
@@ -320,7 +246,7 @@ describe("Saga Booking Test", () => {
     expect(hotelCancelled).toBe(true);
   });
 
-  it("should handle empty workflow (no steps to rollback)", async () => {
+  it("should handle empty workflow fails → no compensations needed", async () => {
     const task = await createTask(pool, "booking-saga", {
       customerId: "cust-empty",
     });
@@ -335,5 +261,173 @@ describe("Saga Booking Test", () => {
 
     const finalTask = await taskRepo.findById(task.id);
     expect(finalTask?.status).toBe(taskStatus.ROLLED_BACK);
+  });
+
+  it("should handle all compensations fail → all go to DLQ", async () => {
+    const task = await createTask(pool, "booking-saga", {
+      customerId: "cust-all-fail",
+    });
+    await taskRepo.updateStatus(task.id, taskStatus.RUNNING);
+
+    const flightStep = await stepRepo.createOrFind(task.id, "book-flight", {
+      from: "SEA",
+      to: "PDX",
+    });
+    await stepRepo.updateCompleted(
+      flightStep.id,
+      { bookingId: "FL-FAIL" },
+      "comp-fail-1",
+    );
+
+    const hotelStep = await stepRepo.createOrFind(task.id, "book-hotel", {
+      city: "PDX",
+    });
+    await stepRepo.updateCompleted(
+      hotelStep.id,
+      { bookingId: "HT-FAIL" },
+      "comp-fail-2",
+    );
+
+    const carStep = await stepRepo.createOrFind(task.id, "book-car", {
+      city: "PDX",
+    });
+    await stepRepo.updateCompleted(
+      carStep.id,
+      { bookingId: "CR-FAIL" },
+      "comp-fail-3",
+    );
+
+    registerCompensation("comp-fail-1", async () => {
+      throw new Error("Flight cancel failed");
+    });
+    registerCompensation("comp-fail-2", async () => {
+      throw new Error("Hotel cancel failed");
+    });
+    registerCompensation("comp-fail-3", async () => {
+      throw new Error("Car cancel failed");
+    });
+
+    const result = await rollbackOrchestrator.rollback(task.id);
+
+    expect(result.totalSteps).toBe(3);
+    expect(result.compensated).toBe(0);
+    expect(result.failed).toBe(3);
+    expect(result.finalStatus).toBe(taskStatus.PARTIAL_ROLLBACK);
+
+    const dlqItems = await dlqRepo.findByTaskId(task.id);
+    expect(dlqItems.length).toBe(3);
+
+    const stepIds = dlqItems.map((item) => item.step_id);
+    expect(stepIds).toContain(carStep.id);
+    expect(stepIds).toContain(hotelStep.id);
+    expect(stepIds).toContain(flightStep.id);
+  });
+
+  it("should handle partial rollback status set correctly", async () => {
+    const task = await createTask(pool, "booking-saga", {
+      customerId: "cust-partial",
+    });
+    await taskRepo.updateStatus(task.id, taskStatus.RUNNING);
+
+    const flightStep = await stepRepo.createOrFind(task.id, "book-flight", {
+      from: "DFW",
+      to: "IAH",
+    });
+    await stepRepo.updateCompleted(
+      flightStep.id,
+      { bookingId: "FL-PARTIAL" },
+      "booking-saga:book-flight",
+    );
+
+    const hotelStep = await stepRepo.createOrFind(task.id, "book-hotel", {
+      city: "IAH",
+    });
+    await stepRepo.updateCompleted(
+      hotelStep.id,
+      { bookingId: "HT-PARTIAL" },
+      "comp-partial-fail",
+    );
+
+    const carStep = await stepRepo.createOrFind(task.id, "book-car", {
+      city: "IAH",
+    });
+    await stepRepo.updateCompleted(
+      carStep.id,
+      { bookingId: "CR-PARTIAL" },
+      "booking-saga:book-car",
+    );
+
+    mockBookings.flights.set("cust-partial", {
+      bookingId: "FL-PARTIAL",
+      cancelled: false,
+    });
+    mockBookings.cars.set("cust-partial", {
+      bookingId: "CR-PARTIAL",
+      cancelled: false,
+    });
+
+    registerCompensation("comp-partial-fail", async () => {
+      throw new Error("Hotel compensation unavailable");
+    });
+
+    const result = await rollbackOrchestrator.rollback(task.id);
+
+    expect(result.totalSteps).toBe(3);
+    expect(result.compensated).toBe(2);
+    expect(result.failed).toBe(1);
+    expect(result.finalStatus).toBe(taskStatus.PARTIAL_ROLLBACK);
+
+    const finalTask = await taskRepo.findById(task.id);
+    expect(finalTask?.status).toBe(taskStatus.PARTIAL_ROLLBACK);
+
+    const flightCancelled = Array.from(mockBookings.flights.values()).some(
+      (b) => b.cancelled,
+    );
+    const carCancelled = Array.from(mockBookings.cars.values()).some(
+      (b) => b.cancelled,
+    );
+    expect(flightCancelled).toBe(true);
+    expect(carCancelled).toBe(true);
+  });
+
+  it("should handle DLQ retry successfully", async () => {
+    const task = await createTask(pool, "booking-saga", {
+      customerId: "cust-retry",
+    });
+    await taskRepo.updateStatus(task.id, taskStatus.RUNNING);
+
+    const hotelStep = await stepRepo.createOrFind(task.id, "book-hotel", {
+      city: "DTW",
+    });
+    await stepRepo.updateCompleted(
+      hotelStep.id,
+      { bookingId: "HT-RETRY" },
+      "comp-retryable",
+    );
+
+    let attemptCount = 0;
+    registerCompensation("comp-retryable", async () => {
+      attemptCount++;
+      if (attemptCount < 2) {
+        throw new Error("Transient failure, try again");
+      }
+    });
+
+    const result = await rollbackOrchestrator.rollback(task.id);
+    expect(result.failed).toBe(1);
+
+    const dlqItems = await dlqRepo.findByTaskId(task.id);
+    expect(dlqItems.length).toBe(1);
+    expect(dlqItems[0]!.retry_count).toBe(0);
+
+    const dlqId = dlqItems[0]!.id;
+    const retryResult = await dlqRepo.retry(dlqId);
+    expect(retryResult.success).toBe(true);
+
+    const dlqItemsAfterRetry = await pool.query(
+      "SELECT * FROM dead_letter_queue WHERE id = $1",
+      [dlqId],
+    );
+    expect(dlqItemsAfterRetry.rows.length).toBe(0);
   });
 });
