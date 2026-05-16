@@ -37,4 +37,9 @@ yarn-error.log*
 .DS_Store
 *.pem
 
+# Internal/strategic docs and planning artifacts (local-only)
 .agent
+
+# Claude Code config — kept local, not pushed
+.claude/
+/CLAUDE.md
