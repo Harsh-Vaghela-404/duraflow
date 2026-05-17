@@ -18,7 +18,7 @@ const TAG = "[duraflow]";
 // Central Configuration
 const config = {
   port: parseInt(process.env.PORT || "50051", 10),
-  reaperStale: parseInt(process.env.REAPER_STALE_THRESHOLD || "300", 10),
+  reaperStale: parseInt(process.env.REAPER_STALE_THRESHOLD || "30", 10),
   reaperInterval: parseInt(process.env.REAPER_INTERVAL || "10000", 10),
   maxQueueSize: parseInt(process.env.MAX_QUEUE_SIZE || "1000", 10),
   maxEventLoopLag: parseInt(process.env.MAX_EVENT_LOOP_LAG || "100", 10),

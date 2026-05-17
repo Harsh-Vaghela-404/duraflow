@@ -1,5 +1,5 @@
 import Redis from 'ioredis';
-import { LeaderElector } from '../../src/services/leaderelector';
+import { LeaderElector } from '../../src/services/leader-elector';
 import { createTestRedis } from '../helpers/db';
 import { sleep } from '../helpers/poll';
 

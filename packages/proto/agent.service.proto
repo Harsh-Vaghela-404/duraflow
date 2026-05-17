@@ -10,6 +10,8 @@ enum TaskStatus {
     COMPLETED = 3;
     FAILED = 4;
     CANCELLED = 5;
+    ROLLED_BACK = 6;
+    PARTIAL_ROLLBACK = 7;
 }
 
 message SubmitTaskRequest {

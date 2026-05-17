@@ -5,7 +5,7 @@ import { TaskRepository } from "../repositories/task.repository";
 import { DeadLetterQueueRepository } from "../repositories/dlq.repository";
 import { taskStatus } from "../db/task.entity";
 
-const TAG = "[rollback]";
+const TAG = "[rollback-orchestrator]";
 
 const DEFAULT_COMPENSATION_TIMEOUT_MS = 30000;
 

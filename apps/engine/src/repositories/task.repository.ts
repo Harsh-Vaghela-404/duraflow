@@ -14,7 +14,7 @@ export class TaskRepository {
 
   async findById(id: string): Promise<TaskEntity | null> {
     const res = await this.pool.query(
-      "SELECT * FROM agent_tasks WHERE id = $1",
+      "SELECT * FROM agent_tasks WHERE id = $1 AND deleted_at IS NULL",
       [id],
     );
     return res.rows[0] || null;
@@ -30,7 +30,7 @@ export class TaskRepository {
   async updateCompleted(id: string, output: unknown): Promise<void> {
     await this.pool.query(
       "UPDATE agent_tasks SET status = $1, output = $2, completed_at = NOW() WHERE id = $3",
-      [taskStatus.COMPLETED, JSON.stringify(output), id],
+      [taskStatus.COMPLETED, output, id],
     );
   }
 
@@ -42,7 +42,7 @@ export class TaskRepository {
 
     await this.pool.query(
       "UPDATE agent_tasks SET status = $1, error = $2, completed_at = NOW() WHERE id = $3",
-      [taskStatus.FAILED, JSON.stringify(errorObj), id],
+      [taskStatus.FAILED, errorObj, id],
     );
   }
 
@@ -71,7 +71,7 @@ export class TaskRepository {
                 FOR UPDATE SKIP LOCKED
             )
             UPDATE agent_tasks
-            SET status = $3, worker_id = $4, heartbeat_at = NOW()
+            SET status = $3, worker_id = $4, heartbeat_at = NOW(), started_at = NOW()
             FROM next_jobs
             WHERE agent_tasks.id = next_jobs.id
             RETURNING agent_tasks.*`,
@@ -100,7 +100,7 @@ export class TaskRepository {
                  heartbeat_at = NULL,
                  worker_id = NULL
              WHERE id = $5`,
-      [taskStatus.PENDING, delayMs, attempt, JSON.stringify(errorObj), id],
+      [taskStatus.PENDING, delayMs, attempt, errorObj, id],
     );
   }
 }

@@ -1,4 +1,4 @@
-import { workflow, registerCompensation } from "@duraflow/sdk";
+import { workflow } from "@duraflow/sdk";
 
 export interface BookingInput {
   customerId: string;
@@ -53,7 +53,7 @@ export const bookingWorkflow = workflow(
         return { bookingId, ...inp.flightDetails };
       },
       {
-        compensation: async (output) => {
+        compensation: async (_output) => {
           const booking = mockBookings.flights.get(inp.customerId);
           if (booking && !booking.cancelled) {
             booking.cancelled = true;
@@ -74,7 +74,7 @@ export const bookingWorkflow = workflow(
         return { bookingId, ...inp.hotelDetails };
       },
       {
-        compensation: async (output) => {
+        compensation: async (_output) => {
           const booking = mockBookings.hotels.get(inp.customerId);
           if (booking && !booking.cancelled) {
             booking.cancelled = true;
@@ -92,7 +92,7 @@ export const bookingWorkflow = workflow(
         return { bookingId, ...inp.carDetails };
       },
       {
-        compensation: async (output) => {
+        compensation: async (_output) => {
           const booking = mockBookings.cars.get(inp.customerId);
           if (booking && !booking.cancelled) {
             booking.cancelled = true;
@@ -102,13 +102,13 @@ export const bookingWorkflow = workflow(
       },
     );
 
-    const payment = await step.run(
+    await step.run(
       "charge-payment",
       async () => {
         throw new Error("PAYMENT_DECLINED: Card was declined");
       },
       {
-        compensation: async (output) => {
+        compensation: async (_output) => {
           // Payment compensation would refund - just tracking for test
           cancellationOrder.push("payment-refund");
         },

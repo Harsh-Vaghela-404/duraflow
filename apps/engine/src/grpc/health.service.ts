@@ -11,9 +11,9 @@ import {
   ServerWritableStream,
 } from "@grpc/grpc-js";
 
-export class HealthService {
-  [name: string]: any;
+const TAG = "[health-service]";
 
+export class HealthService {
   constructor(
     private readonly pool: Pool,
     private readonly redis: Redis,
@@ -28,7 +28,7 @@ export class HealthService {
       await this.redis.ping();
       callback(null, { status: HealthCheckResponse_ServingStatus.SERVING });
     } catch (error) {
-      console.error("Health check failed:", error);
+      console.error(`${TAG} check failed:`, error);
       callback(null, { status: HealthCheckResponse_ServingStatus.NOT_SERVING });
     }
   }

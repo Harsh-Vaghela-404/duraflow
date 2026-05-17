@@ -5,22 +5,12 @@ import { Pool } from 'pg';
 import Piscina from 'piscina';
 import { StepRepository } from '../repositories/step.repository';
 import { TaskRepository } from '../repositories/task.repository';
+import { RollbackOrchestrator } from './rollback-orchestrator';
 import { TaskEntity } from '../db/task.entity';
+import type { IPCRequest, IPCResponse } from '../workers/ipc-client';
+import { PISCINA_MAX_QUEUE, PISCINA_IDLE_TIMEOUT_MS } from '../constants/engine';
 
-const TAG = '[executor]';
-
-interface IPCRequest {
-  id: string;
-  type: 'STEP_FIND' | 'STEP_CREATE_OR_FIND' | 'STEP_COMPLETE' | 'STEP_FAIL' | 'STEP_INCREMENT';
-  payload: Record<string, unknown>;
-}
-
-interface IPCResponse {
-  id: string;
-  success: boolean;
-  data?: unknown;
-  error?: { message: string; name: string };
-}
+const TAG = '[workflow-executor]';
 
 interface StepRetryPayload {
   __stepRetry: true;
@@ -31,7 +21,7 @@ interface StepRetryPayload {
 
 export function createPiscinaPool(): Piscina {
   const isTs = path.extname(__filename) === '.ts';
-  const workerPath = path.resolve(__dirname, `../workers/workflow.worker${isTs ? '.ts' : '.js'}`);
+  const workerPath = path.resolve(__dirname, `../workers/step-worker${isTs ? '.ts' : '.js'}`);
   const cpuCount = os.cpus().length;
 
   const pool = new Piscina({
@@ -39,8 +29,8 @@ export function createPiscinaPool(): Piscina {
     execArgv: isTs ? ['--import', 'tsx'] : [],
     maxThreads: Math.max(2, cpuCount - 1),
     minThreads: 1,
-    maxQueue: 10000,
-    idleTimeout: 30000,
+    maxQueue: PISCINA_MAX_QUEUE,
+    idleTimeout: PISCINA_IDLE_TIMEOUT_MS,
     env: { ...process.env, DURAFLOW_WORKFLOWS: process.env.DURAFLOW_WORKFLOWS ?? '' },
   });
 
@@ -51,11 +41,13 @@ export function createPiscinaPool(): Piscina {
 export class WorkflowExecutor {
   private stepRepo: StepRepository;
   private taskRepo: TaskRepository;
+  private rollback: RollbackOrchestrator;
   private pool: Piscina;
 
   constructor(dbPool: Pool, piscinaPool: Piscina) {
     this.stepRepo = new StepRepository(dbPool);
     this.taskRepo = new TaskRepository(dbPool);
+    this.rollback = new RollbackOrchestrator(dbPool);
     this.pool = piscinaPool;
   }
 
@@ -87,6 +79,15 @@ export class WorkflowExecutor {
 
       console.error(`${TAG} task ${task.id} failed:`, err);
       await this.taskRepo.fail(task.id, err);
+      // Await the rollback so a process restart mid-rollback doesn't leave the
+      // task in `failed` with completed steps that never had their compensations
+      // run. The rollback's own try/catch routes failures to DLQ — it should not
+      // throw — but we guard defensively in case of an unexpected error.
+      try {
+        await this.rollback.rollback(task.id);
+      } catch (rollbackErr) {
+        console.error(`${TAG} rollback failed for task ${task.id}:`, rollbackErr);
+      }
       throw err;
     } finally {
       port1.removeAllListeners();

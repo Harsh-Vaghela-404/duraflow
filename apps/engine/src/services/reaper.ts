@@ -1,7 +1,7 @@
 import { Pool } from 'pg';
 import { Redis } from 'ioredis';
 import { taskStatus } from '../db/task.entity';
-import { LeaderElector } from './leaderelector';
+import { LeaderElector } from './leader-elector';
 
 const TAG = '[reaper]';
 
@@ -17,7 +17,7 @@ export interface ReapedTask {
 export class Reaper {
     private readonly intervalMs: number;
     private readonly staleThresholdSeconds: number;
-    private intervalHandle: NodeJS.Timeout | null = null;
+    private timeoutHandle: NodeJS.Timeout | null = null;
     private running = false;
     private isReaping = false;
     private leaderElector: LeaderElector;
@@ -25,7 +25,7 @@ export class Reaper {
     constructor(
         private readonly pool: Pool,
         redis: Redis,
-        staleThresholdSeconds = 300,
+        staleThresholdSeconds = 30,
         intervalMs = 10_000,
     ) {
         this.staleThresholdSeconds = staleThresholdSeconds;
@@ -48,16 +48,24 @@ export class Reaper {
         this.running = true;
         console.log(`${TAG} started as leader (interval: ${this.intervalMs}ms, stale threshold: ${this.staleThresholdSeconds}s)`);
 
-        // Fire immediately, then on schedule
-        this.reap();
-        this.intervalHandle = setInterval(() => this.reap(), this.intervalMs);
+        // Recursive setTimeout so each tick waits for the previous reap to finish —
+        // gives natural backpressure when a reap cycle runs long under DB pressure.
+        void this.runReapLoop();
+    }
+
+    private async runReapLoop(): Promise<void> {
+        if (!this.running) return;
+        await this.reap();
+        if (this.running) {
+            this.timeoutHandle = setTimeout(() => { void this.runReapLoop(); }, this.intervalMs);
+        }
     }
 
     async stop(): Promise<void> {
         this.running = false;
-        if (this.intervalHandle) {
-            clearInterval(this.intervalHandle);
-            this.intervalHandle = null;
+        if (this.timeoutHandle) {
+            clearTimeout(this.timeoutHandle);
+            this.timeoutHandle = null;
         }
         await this.leaderElector.releaseLeadership();
         console.log(`${TAG} stopped`);
@@ -69,6 +77,10 @@ export class Reaper {
 
     async reap(): Promise<ReapedTask[]> {
         if (this.isReaping) return [];
+        if (this.running && !await this.leaderElector.isLeader()) {
+            console.warn(`${TAG} lost leadership, skipping reap cycle`);
+            return [];
+        }
         this.isReaping = true;
 
         const reaped: ReapedTask[] = [];

@@ -4,6 +4,7 @@ export enum stepStatus {
   COMPLETED = 'completed',
   FAILED = 'failed',
   CANCELLED = 'cancelled',
+  ROLLED_BACK = 'rolled_back',
 }
 
 export interface StepRunsEntity {

@@ -2,15 +2,18 @@ import * as grpc from '@grpc/grpc-js';
 import { ServerUnaryCall, sendUnaryData } from '@grpc/grpc-js';
 import { Pool } from 'pg';
 import { TaskRepository } from '../repositories/task.repository';
+import { StepRepository } from '../repositories/step.repository';
 import { taskStatus } from '../db/task.entity';
 
-const TAG = '[grpc]';
+const TAG = '[agent-service]';
 
 export class AgentServiceImpl {
     private taskRepo: TaskRepository;
+    private stepRepo: StepRepository;
 
     constructor(pool: Pool) {
         this.taskRepo = new TaskRepository(pool);
+        this.stepRepo = new StepRepository(pool);
     }
 
     async submitTask(call: ServerUnaryCall<any, any>, callback: sendUnaryData<any>) {
@@ -21,7 +24,16 @@ export class AgentServiceImpl {
                 return callback({ code: grpc.status.INVALID_ARGUMENT, message: 'workflow_name is required' });
             }
 
-            const task = await this.taskRepo.create(workflow_name, input ? JSON.parse(input.toString()) : {});
+            let parsedInput: Record<string, unknown> = {};
+            if (input) {
+                try {
+                    parsedInput = JSON.parse(input.toString());
+                } catch {
+                    return callback({ code: grpc.status.INVALID_ARGUMENT, message: 'input must be valid JSON' });
+                }
+            }
+
+            const task = await this.taskRepo.create(workflow_name, parsedInput);
             callback(null, { task_id: task.id });
         } catch (err) {
             console.error(`${TAG} submitTask error:`, err);
@@ -73,6 +85,97 @@ export class AgentServiceImpl {
             callback(null, { success: true });
         } catch (err) {
             console.error(`${TAG} cancelTask error:`, err);
+            callback({ code: grpc.status.INTERNAL, message: String(err) });
+        }
+    }
+
+    async getStep(call: ServerUnaryCall<any, any>, callback: sendUnaryData<any>) {
+        try {
+            const { task_id, step_key } = call.request;
+
+            if (!task_id || typeof task_id !== 'string') {
+                return callback({ code: grpc.status.INVALID_ARGUMENT, message: 'task_id is required' });
+            }
+            if (!step_key || typeof step_key !== 'string') {
+                return callback({ code: grpc.status.INVALID_ARGUMENT, message: 'step_key is required' });
+            }
+
+            const step = await this.stepRepo.findByTaskAndKey(task_id, step_key);
+            if (!step) {
+                return callback(null, { found: false, completed: false, output: Buffer.from('') });
+            }
+
+            callback(null, {
+                found: true,
+                completed: step.status === 'completed',
+                output: step.output ? Buffer.from(JSON.stringify(step.output)) : Buffer.from(''),
+            });
+        } catch (err) {
+            console.error(`${TAG} getStep error:`, err);
+            callback({ code: grpc.status.INTERNAL, message: String(err) });
+        }
+    }
+
+    async completeStep(call: ServerUnaryCall<any, any>, callback: sendUnaryData<any>) {
+        try {
+            const { task_id, step_key, output } = call.request;
+
+            if (!task_id || typeof task_id !== 'string') {
+                return callback({ code: grpc.status.INVALID_ARGUMENT, message: 'task_id is required' });
+            }
+            if (!step_key || typeof step_key !== 'string') {
+                return callback({ code: grpc.status.INVALID_ARGUMENT, message: 'step_key is required' });
+            }
+
+            const step = await this.stepRepo.findByTaskAndKey(task_id, step_key);
+            if (!step) {
+                return callback({ code: grpc.status.NOT_FOUND, message: `Step '${step_key}' not found` });
+            }
+
+            let parsed: unknown = null;
+            if (output) {
+                try {
+                    parsed = JSON.parse(output.toString());
+                } catch {
+                    return callback({ code: grpc.status.INVALID_ARGUMENT, message: 'output must be valid JSON' });
+                }
+            }
+            await this.stepRepo.updateCompleted(step.id, parsed);
+            callback(null, { success: true });
+        } catch (err) {
+            console.error(`${TAG} completeStep error:`, err);
+            callback({ code: grpc.status.INTERNAL, message: String(err) });
+        }
+    }
+
+    async failStep(call: ServerUnaryCall<any, any>, callback: sendUnaryData<any>) {
+        try {
+            const { task_id, step_key, error } = call.request;
+
+            if (!task_id || typeof task_id !== 'string') {
+                return callback({ code: grpc.status.INVALID_ARGUMENT, message: 'task_id is required' });
+            }
+            if (!step_key || typeof step_key !== 'string') {
+                return callback({ code: grpc.status.INVALID_ARGUMENT, message: 'step_key is required' });
+            }
+
+            const step = await this.stepRepo.findByTaskAndKey(task_id, step_key);
+            if (!step) {
+                return callback({ code: grpc.status.NOT_FOUND, message: `Step '${step_key}' not found` });
+            }
+
+            let parsed: unknown = { message: 'Unknown error' };
+            if (error) {
+                try {
+                    parsed = JSON.parse(error.toString());
+                } catch {
+                    return callback({ code: grpc.status.INVALID_ARGUMENT, message: 'error must be valid JSON' });
+                }
+            }
+            await this.stepRepo.updateFailed(step.id, parsed);
+            callback(null, { success: true });
+        } catch (err) {
+            console.error(`${TAG} failStep error:`, err);
             callback({ code: grpc.status.INTERNAL, message: String(err) });
         }
     }

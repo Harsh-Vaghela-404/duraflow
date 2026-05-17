@@ -81,7 +81,7 @@ export class StepRepository {
              WHERE task_id = $1
                AND status = $2
                AND compensation_fn IS NOT NULL
-             ORDER BY completed_at DESC`,
+             ORDER BY completed_at DESC, created_at DESC, id DESC`,
       [taskId, stepStatus.COMPLETED],
     );
     return res.rows;
@@ -89,8 +89,8 @@ export class StepRepository {
 
   async markCompensated(stepId: string): Promise<void> {
     await this.pool.query(
-      "UPDATE step_runs SET compensated_at = NOW() WHERE id = $1",
-      [stepId],
+      "UPDATE step_runs SET status = $1, compensated_at = NOW() WHERE id = $2",
+      [stepStatus.ROLLED_BACK, stepId],
     );
   }
 

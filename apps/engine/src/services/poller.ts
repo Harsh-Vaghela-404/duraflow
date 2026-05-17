@@ -39,7 +39,7 @@ export class Poller {
         }
         this.running = true;
         console.log(`${TAG} started (worker: ${this.workerId})`);
-        this.poll();
+        void this.poll();
     }
 
     async stop(): Promise<void> {

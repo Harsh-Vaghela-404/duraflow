@@ -43,3 +43,6 @@ yarn-error.log*
 # Claude Code config — kept local, not pushed
 .claude/
 /CLAUDE.md
+
+# Proto generated files — run `buf generate` or `protoc` to regenerate
+packages/proto/generated/

@@ -28,4 +28,7 @@ async function migrate() {
   }
 }
 
-migrate();
+migrate().catch((err) => {
+    console.error(`${TAG} fatal:`, err);
+    process.exit(1);
+});

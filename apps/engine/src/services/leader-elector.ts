@@ -1,7 +1,7 @@
 import { Redis } from 'ioredis';
 
 const LEADER_KEY = 'duraflow:reaper:leader';
-const TAG = '[leader]';
+const TAG = '[leader-elector]';
 
 export class LeaderElector {
     private readonly workerId: string;

@@ -6,6 +6,12 @@ import Redis from "ioredis";
 import { HealthService } from "./health.service";
 import { AgentServiceImpl } from "./agent.service";
 
+// any: @grpc/reflection has no bundled TypeScript declarations
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const reflectionModule = require("@grpc/reflection") as any;
+
+const TAG = "[grpc-server]";
+
 const HEALTH_PROTO_PATH = path.join(
   __dirname,
   "../../../..",
@@ -51,11 +57,13 @@ export function createGrpcServer(pool: Pool, redis: Redis): grpc.Server {
     submitTask: agentService.submitTask.bind(agentService),
     getTaskStatus: agentService.getTaskStatus.bind(agentService),
     cancelTask: agentService.cancelTask.bind(agentService),
+    getStep: agentService.getStep.bind(agentService),
+    completeStep: agentService.completeStep.bind(agentService),
+    failStep: agentService.failStep.bind(agentService),
   });
 
   // reflection for grpcurl debugging
-  const reflection = require("@grpc/reflection");
-  const reflectionService = new reflection.ReflectionService({
+  const reflectionService = new reflectionModule.ReflectionService({
     ...healthPackageDef,
     ...agentPackageDef,
   });
@@ -76,7 +84,7 @@ export function startGrpcServer(
         if (err) {
           reject(err);
         } else {
-          console.log(`[duraflow] grpc server listening on port ${boundPort}`);
+          console.log(`${TAG} listening on port ${boundPort}`);
           resolve(boundPort);
         }
       },

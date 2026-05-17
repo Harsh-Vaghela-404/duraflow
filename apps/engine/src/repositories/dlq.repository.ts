@@ -2,6 +2,7 @@ import { Pool } from "pg";
 import { DeadLetterQueueEntity } from "../db/dead_letter_queue.entity";
 import { StepRepository } from "./step.repository";
 import { compensationRegistry } from "@duraflow/sdk";
+import { taskStatus } from "../db/task.entity";
 
 export class DeadLetterQueueRepository {
   constructor(private readonly pool: Pool) {}
@@ -11,16 +12,21 @@ export class DeadLetterQueueRepository {
     stepId: string,
     error: unknown,
   ): Promise<DeadLetterQueueEntity> {
+    // RollbackOrchestrator passes a rich plain-object error context — keep it as-is
+    // so operators get the full taskId/stepId/stepKey/compensationFn breadcrumb.
+    // Wrap primitives and stringify-only values into a minimal { message } envelope.
     const errorObj =
       error instanceof Error
         ? { message: error.message, name: error.name, stack: error.stack }
-        : { message: String(error) };
+        : typeof error === "object" && error !== null
+          ? error
+          : { message: String(error) };
 
     const res = await this.pool.query(
       `INSERT INTO dead_letter_queue (task_id, step_id, error)
              VALUES ($1, $2, $3)
              RETURNING *`,
-      [taskId, stepId, JSON.stringify(errorObj)],
+      [taskId, stepId, errorObj],
     );
     return res.rows[0];
   }
@@ -93,7 +99,20 @@ export class DeadLetterQueueRepository {
 
     try {
       await compensationFn(step.output);
+      await stepRepo.markCompensated(item.step_id);
       await this.delete(id);
+
+      // If this was the last unresolved DLQ entry for the task, the saga is now
+      // fully compensated — transition partial_rollback → rolled_back so the task's
+      // terminal status reflects reality.
+      const remaining = await this.findByTaskId(item.task_id);
+      if (remaining.length === 0) {
+        await this.pool.query(
+          `UPDATE agent_tasks SET status = $1 WHERE id = $2 AND status = $3`,
+          [taskStatus.ROLLED_BACK, item.task_id, taskStatus.PARTIAL_ROLLBACK],
+        );
+      }
+
       return { success: true };
     } catch (err) {
       await this.incrementRetryCount(id);

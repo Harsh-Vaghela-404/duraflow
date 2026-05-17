@@ -1,4 +1,4 @@
-import { spawn, ChildProcess } from "child_process";
+import { spawn, ChildProcess, execSync } from "child_process";
 import path from "path";
 import * as grpc from "@grpc/grpc-js";
 import * as protoLoader from "@grpc/proto-loader";
@@ -30,6 +30,8 @@ describe("E2E gRPC", () => {
   let engine: ChildProcess;
   let client: any;
   const PORT = 50100; // Use different port to avoid conflicts
+  // Hoisted so afterAll can reference it for pkill cleanup
+  const enginePath = path.resolve(__dirname, "../../src/index.ts");
 
   beforeAll(async () => {
     // Clear DB first
@@ -38,7 +40,6 @@ describe("E2E gRPC", () => {
     await closePool(pool);
 
     // Spawn engine
-    const enginePath = path.resolve(__dirname, "../../src/index.ts");
     engine = spawn("npx", ["tsx", enginePath], {
       env: {
         ...process.env,
@@ -51,8 +52,9 @@ describe("E2E gRPC", () => {
           process.env.DATABASE_URL ||
           "postgresql://duraflow:duraflow@localhost:5432/duraflow",
       },
-      stdio: "pipe", // Capture stdout/stderr
-      shell: true, // Needed on Windows
+      stdio: "pipe",
+      shell: true,
+      detached: true, // New process group so the whole tree can be killed cleanly
     });
 
     // Wait for port to be ready
@@ -75,16 +77,37 @@ describe("E2E gRPC", () => {
 
   afterAll(async () => {
     client?.close();
-    if (engine && !engine.killed) {
-      // Force kill to ensure process stops
+    if (engine?.pid && !engine.killed) {
       if (process.platform === "win32") {
         spawn("taskkill", ["/pid", String(engine.pid), "/f", "/t"]);
       } else {
-        engine.kill("SIGTERM");
+        // Kill the entire process group (shell + npx + tsx + node engine).
+        // SIGKILL is used because the engine has a SIGTERM graceful-shutdown handler
+        // that takes several seconds. SIGKILL is unblockable so every process in the
+        // group (shell, npx, tsx, node) dies immediately, preventing the orphaned
+        // Poller from dequeuing tasks in subsequent tests.
+        // detached:true gave the shell its own PGID equal to engine.pid.
+        try {
+          process.kill(-engine.pid, "SIGKILL");
+        } catch {
+          engine.kill("SIGKILL");
+        }
+        // npm exec spawns its child processes (sh → tsx → node) in the parent's
+        // process group rather than the detached shell's group, so the process-group
+        // kill above may leave the actual engine node process alive. Kill any
+        // surviving process whose argv contains the unique engine entry-point path.
+        try {
+          execSync(`pkill -9 -f "${enginePath}" 2>/dev/null || true`);
+        } catch {
+          // pkill not available or no matching processes — ignore
+        }
       }
+      // Wait for the shell process to actually exit before moving on
+      await new Promise<void>((resolve) => {
+        engine.once("exit", resolve);
+        setTimeout(resolve, 5000); // fallback in case exit event never fires
+      });
     }
-    // Give it a moment to release ports
-    await sleep(2000);
   });
 
   it("submits a task via gRPC and polls until completion", async () => {

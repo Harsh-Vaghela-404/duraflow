@@ -16,7 +16,7 @@ import {
   resetCancellationOrder,
   resetMockBookings,
   mockBookings,
-} from "../../src/workflows/booking-saga";
+} from "../workflows/booking-saga";
 import { registerCompensation } from "@duraflow/sdk";
 
 describe("Saga Edge Cases", () => {
@@ -119,6 +119,12 @@ describe("Saga Edge Cases", () => {
     expect(dlqItems.length).toBe(1);
     expect(dlqItems[0]!.step_id).toBe(hotelStep.id);
     expect(dlqItems[0]!.retry_count).toBe(0);
+
+    // Verify the DLQ stores the rich error context, not "[object Object]"
+    const errorCtx = dlqItems[0]!.error as Record<string, unknown>;
+    expect(errorCtx.stepKey).toBe("book-hotel");
+    expect(errorCtx.compensationFn).toBe("compensation-that-throws");
+    expect(errorCtx.error).toMatchObject({ message: "Intentional compensation failure" });
   });
 
   it("should handle compensation times out → treated as failure", async () => {
@@ -421,6 +427,11 @@ describe("Saga Edge Cases", () => {
     expect(dlqItems[0]!.retry_count).toBe(0);
 
     const dlqId = dlqItems[0]!.id;
+
+    // Task should be in partial_rollback prior to retry
+    const taskBefore = await taskRepo.findById(task.id);
+    expect(taskBefore?.status).toBe(taskStatus.PARTIAL_ROLLBACK);
+
     const retryResult = await dlqRepo.retry(dlqId);
     expect(retryResult.success).toBe(true);
 
@@ -429,5 +440,9 @@ describe("Saga Edge Cases", () => {
       [dlqId],
     );
     expect(dlqItemsAfterRetry.rows.length).toBe(0);
+
+    // With the last DLQ entry resolved, task should transition to rolled_back
+    const taskAfter = await taskRepo.findById(task.id);
+    expect(taskAfter?.status).toBe(taskStatus.ROLLED_BACK);
   });
 });
