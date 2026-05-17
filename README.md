@@ -1,89 +1,168 @@
 # Duraflow
 
 <p align="center">
-  <strong>Durable execution engine for AI agents. Crash-proof workflows with automatic rollbacks.</strong>
+  <strong>Durable workflow engine that makes AI agents crash-proof.</strong><br>
+  Wrap your agent in <code>step.run()</code>, get checkpointing, retries, and saga rollbacks for free.
 </p>
 
 <p align="center">
   <a href="https://duraflow-docs.vercel.app">
     <img src="https://img.shields.io/badge/Docs-Live-brightgreen" alt="Documentation">
   </a>
-  <a href="https://github.com/your-org/duraflow/actions">
-    <img src="https://img.shields.io/github/actions/status/your-org/duraflow/main" alt="Build">
+  <a href="product/status.md">
+    <img src="https://img.shields.io/badge/Status-Phase%201%20shipped-blue" alt="Status">
   </a>
   <a href="LICENSE">
-    <img src="https://img.shields.io/github/license/your-org/duraflow" alt="License">
+    <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License">
   </a>
+  <img src="https://img.shields.io/badge/Node-%3E%3D18-339933.svg?logo=node.js&logoColor=white" alt="Node">
+  <img src="https://img.shields.io/badge/TypeScript-5.9-3178C6.svg?logo=typescript&logoColor=white" alt="TypeScript">
 </p>
+
+> **Status:** Phase 1 (the engine) is shipped and tested. Phase 2 (SDK ecosystem: Python, LangChain/CrewAI adapters, CLI, rate limiting) is next. See [product/status.md](product/status.md) for the honest line-item state.
 
 ---
 
-## Why Duraflow?
+## The Problem
 
-AI agents aren't simple scripts anymore. They book flights, charge payments, send emails, provision infrastructure. If your orchestration layer can't undo those actions on failure, you're building on a foundation that will eventually collapse in production.
+AI agents run for minutes to hours. They call expensive LLMs, book hotels, charge cards, send emails. Any one of a dozen things can interrupt them mid-flight — a server restart, an API timeout, a rate limit, a network hiccup. When an agent crashes after step 7 of 10, traditional infrastructure has one answer: start over. The tokens you paid for, the work you already did — gone.
 
-**Duraflow gives you:**
+## The Solution
 
-- ✅ **Crash Recovery** — Resume from where you left off after any failure
-- ✅ **Sagas** — Automatic rollback of completed steps when workflows fail
-- ✅ **Rate Limiting** — Built-in token bucket for LLM APIs
-- ✅ **Multi-Worker** — Concurrent task processing without duplicates
+Duraflow is a durable workflow engine designed for the shape of AI work. You wrap your agent code in `step.run(...)`. Duraflow handles everything else:
+
+- **Checkpoints every step** to Postgres so crashes don't lose progress
+- **Resumes from the last completed step** when the worker restarts
+- **Memoizes results** — completed steps return cached output on retry, no double LLM bills
+- **Rolls back automatically** in LIFO order when a later step fails (saga pattern)
+- **Routes failed compensations** to a dead-letter queue for operator inspection
+
+```typescript
+import { workflow } from "@duraflow/sdk";
+
+export const researchAgent = workflow("research-agent", async ({ step, input }) => {
+  const results = await step.run("search", async () => {
+    return await searchTheWeb(input.topic);
+  });
+
+  const summary = await step.run("summarize", async () => {
+    return await openai.summarize(results);
+  }, { retries: 3 });
+
+  await step.run("save", async () => {
+    return await db.insert(summary);
+  }, {
+    compensation: async (saved) => {
+      // If a later step fails, this undo runs automatically.
+      await db.delete(saved.id);
+    },
+  });
+
+  return summary;
+});
+```
+
+That's the whole API. Wrap each unit of work in `step.run`. Optionally provide a `compensation` for steps that need to be undone.
 
 ---
 
 ## Quick Start
 
+**Requirements:** Node ≥18, Docker (for Postgres + Redis).
+
 ```bash
-# 1. Start infrastructure
-docker compose up -d
+# 1. Clone the repo
+git clone https://github.com/Harsh-Vaghela-404/duraflow
+cd duraflow
 
 # 2. Install dependencies
 npm install
 
-# 3. Run the engine
+# 3. Start Postgres + Redis
+docker compose up -d postgres redis
+
+# 4. Configure .env in apps/engine (see apps/engine/.env.example if present)
+# DATABASE_URL=postgresql://duraflow:duraflow@localhost:5432/duraflow
+# REDIS_URL=redis://localhost:6379
+
+# 5. Run migrations
+npx tsx apps/engine/src/db/migrate.ts
+
+# 6. Start the engine
 npm run dev --workspace=@duraflow/engine
 ```
 
-**Full documentation:** [https://duraflow-docs.vercel.app](https://duraflow-docs.vercel.app)
+The engine binds gRPC on `localhost:50051` (insecure credentials — trusted-network deployment for now). Use `grpcurl` to talk to it:
+
+```bash
+grpcurl -plaintext localhost:50051 grpc.health.v1.Health/Check
+```
+
+**Full developer docs:** [duraflow-docs.vercel.app](https://duraflow-docs.vercel.app)
 
 ---
 
-## What It Does
+## What's Built
 
-### Crash Recovery (Memoization)
+### Phase 1 — Core Engine [SHIPPED]
 
-Every step's output is automatically saved. On crash, the workflow resumes from the last successful step — no re-execution.
+- ✅ **Durable task queue** on PostgreSQL with `FOR UPDATE SKIP LOCKED` — atomic, lock-free, multi-worker safe
+- ✅ **Step memoization** keyed on `(task_id, step_key)` — re-running a workflow skips already-completed steps
+- ✅ **Saga compensation** with LIFO rollback over completed steps
+- ✅ **Dead-letter queue** for failed compensations — operator retries via `dlqRepo.retry(id)`
+- ✅ **Heartbeat + Reaper** — dead workers don't leak tasks; reaper recovers stale `running` tasks
+- ✅ **Redis leader election** (SET NX EX + Lua check-and-renew) — singleton reaper across the cluster
+- ✅ **Piscina worker thread pool** — workflow execution runs off the gRPC server's event loop
+- ✅ **Backpressure** — queue size + event-loop lag thresholds pause ingestion when saturated
+- ✅ **Exponential-backoff retry** with `StepRetryError`
+- ✅ **superjson serialization** — `Date`, `Map`, `Set`, `Error` round-trip cleanly (1 MB cap per payload)
+- ✅ **TypeScript SDK** (`@duraflow/sdk`): `workflow`, `step.run`, retries, compensation, serialize
+- ✅ **Three-tier test suite**: 7 unit, 4 integration, 1 e2e — all green
+- ✅ **Public documentation site** at [duraflow-docs.vercel.app](https://duraflow-docs.vercel.app)
 
-```typescript
-const result = await ctx.step.run("process-data", async () => {
-  return await api.process(input);
-});
-// If crash here, next run skips this step entirely
+### Phase 2 — SDK Ecosystem [NEXT, not started]
+
+- 🔜 Python SDK (`pip install duraflow`)
+- 🔜 LangChain adapter (`duraflow.wrap(chain)`)
+- 🔜 CrewAI adapter (`duraflow.wrap(crew)`)
+- 🔜 REST API wrapper + webhooks + scheduled triggers
+- 🔜 CLI (`duraflow init` / `dev` / `deploy` / `runs` / `logs`)
+- 🔜 Rate limiting (Redis token bucket; per-API limits for OpenAI / Anthropic)
+
+### Phase 3 — Dashboard, Cost, Human-in-Loop [LATER]
+
+- 🔜 React dashboard (runs list, step timeline, log streaming)
+- 🔜 Token / cost tracking
+- 🔜 `ctx.waitForApproval()` for human-in-loop steps
+- 🔜 Slack / webhook notifications
+
+### Phase 4 — Time Travel + Launch [LATER]
+
+- 🔜 Fork-and-replay debugging (replay from arbitrary step without re-paying for earlier work)
+- 🔜 Auth layer (gRPC interceptor + Metadata-based)
+- 🔜 OpenTelemetry / Prometheus / TLS
+- 🔜 Multi-tenancy (row-level security, per-tenant quotas)
+
+See [product/roadmap.md](product/roadmap.md) for the full plan.
+
+---
+
+## Architecture
+
+```
+Client ──gRPC──> Duraflow Engine ──Piscina workers──> Your Workflow Code
+                       │
+                       ├──> PostgreSQL   (agent_tasks, step_runs, dead_letter_queue)
+                       └──> Redis        (leader election for the reaper)
 ```
 
-### Sagas (Compensation)
+- **PostgreSQL** is the source of truth. Raw `pg` (no ORM). `FOR UPDATE SKIP LOCKED` is the queue primitive.
+- **Redis** is intentionally narrow — distributed leader election only. No generic caching.
+- **Piscina** worker thread pool runs the workflow code so the gRPC server stays responsive.
+- **gRPC** is the transport (`@grpc/grpc-js` 1.9), with reflection enabled for `grpcurl`.
+- **superjson** preserves rich types through serialization with a 1 MB cap per payload.
 
-Define compensation functions to automatically undo completed steps on failure:
-
-```typescript
-const booking = await ctx.step.run(
-  "book-flight",
-  async () => {
-    return await api.bookFlight(details);
-  },
-  {
-    compensation: async (output) => {
-      await api.cancelFlight(output.bookingId);
-    },
-  },
-);
-```
-
-If payment fails later → Duraflow automatically cancels the flight.
-
-### Multi-Worker Concurrency
-
-PostgreSQL's `SKIP LOCKED` ensures multiple workers can process tasks concurrently without duplicate processing.
+For a deeper dive, see [knowledge-base/ARCHITECTURE.md](knowledge-base/ARCHITECTURE.md) (module-by-module reference) and [knowledge-base/FLOWS.md](knowledge-base/FLOWS.md) (end-to-end flows like submit, execute, retry, rollback, reap).
 
 ---
 
@@ -92,83 +171,61 @@ PostgreSQL's `SKIP LOCKED` ensures multiple workers can process tasks concurrent
 ```
 duraflow/
 ├── apps/
-│   └── engine/           # Orchestrator server (Node.js)
+│   └── engine/                — gRPC server, poller, workers, repositories, services
 ├── packages/
-│   ├── sdk/              # Developer API (@duraflow/sdk)
-│   └── proto/            # gRPC definitions
-└── docs/                 # Documentation
+│   ├── sdk/                   — @duraflow/sdk: workflow, step.run, compensation, serialize
+│   ├── proto/                 — gRPC protobuf definitions + ts-proto generated types
+│   └── typescript-config/     — Shared tsconfig bases
+├── docs/                      — VitePress site (published to Vercel)
+├── product/                   — Product story (overview, vision, status, roadmap)
+├── knowledge-base/            — Codebase reference (architecture, patterns, gotchas)
+└── docker-compose.yml         — Local infra (postgres:16, redis:7, qdrant)
 ```
 
----
-
-## Usage Example
-
-```typescript
-import { workflow } from "@duraflow/sdk";
-
-const orderWorkflow = workflow("process-order", async (ctx) => {
-  // Step 1: Validate order (no compensation needed)
-  const validated = await ctx.step.run("validate", async () => {
-    if (!ctx.input.items.length) throw new Error("No items");
-    return { valid: true };
-  });
-
-  // Step 2: Process payment (with compensation for rollback)
-  const payment = await ctx.step.run(
-    "charge",
-    async () => {
-      const result = await stripe.charge(ctx.input.amount);
-      if (!result.success) throw new Error("Payment failed");
-      return { transactionId: result.id };
-    },
-    {
-      compensation: async (output) => {
-        await stripe.refund(output.transactionId);
-      },
-    },
-  );
-
-  // Step 3: Create order
-  const order = await ctx.step.run("create-order", async () => {
-    return await db.orders.create({ paymentId: payment.transactionId });
-  });
-
-  return order;
-});
-```
-
----
-
-## Tech Stack
-
-| Component | Technology                             |
-| --------- | -------------------------------------- |
-| Runtime   | Node.js (10k+ concurrent waits)        |
-| Queue     | PostgreSQL (SKIP LOCKED)               |
-| Cache     | Redis (rate limiting, leader election) |
-| Vector DB | Qdrant (agent memory)                  |
-| API       | gRPC + TypeScript SDK                  |
+`apps/dashboard/` exists as an empty placeholder for the Phase 3 dashboard. Qdrant is provisioned in `docker-compose.yml` for future vector-memory features but is not wired into the engine yet.
 
 ---
 
 ## Documentation
 
-Complete guides available at **[https://duraflow-docs.vercel.app](https://duraflow-docs.vercel.app)**:
+| Audience | Read |
+|---|---|
+| **First-time visitor** | [product/overview.md](product/overview.md) — 5-minute pitch |
+| **Evaluating Duraflow** | [product/status.md](product/status.md) — honest current state |
+| **Planning around the roadmap** | [product/roadmap.md](product/roadmap.md) — phased delivery plan |
+| **Deeper context / vision** | [product/vision.md](product/vision.md) — long-form vision |
+| **Building with Duraflow** | [duraflow-docs.vercel.app](https://duraflow-docs.vercel.app) — installation, tutorial, API |
+| **Working on the code** | [knowledge-base/](knowledge-base/) — architecture, patterns, gotchas, flows |
 
-- 📖 [Getting Started](https://duraflow-docs.vercel.app) — Quick overview
-- 📦 [Installation](https://duraflow-docs.vercel.app/installation) — Setup guide
-- 📚 [Tutorial](https://duraflow-docs.vercel.app/tutorial) — Build your first workflow
-- 🔄 [Sagas Guide](https://duraflow-docs.vercel.app/sagas) — Compensation patterns
-- 📖 [API Reference](https://duraflow-docs.vercel.app/api/overview) — SDK & gRPC docs
+---
+
+## Why Postgres, Not Kafka / Temporal / Redis Streams
+
+Every AI team already runs Postgres. Adding a Kafka cluster, a Temporal persistence stack, or a separate Redis-backed state store is operational overhead that kills adoption for small teams.
+
+Postgres + `FOR UPDATE SKIP LOCKED` is a battle-tested queue (used by Stripe, Sidekiq Pro, and many others). JSONB handles step payloads. One database, one source of truth, one set of backups. Duraflow stays small on purpose: PostgreSQL for state, Redis for one specific job (leader election), nothing else mandatory.
+
+---
+
+## Contributing
+
+This is a young project. The fastest way to help:
+
+1. **Try it.** Clone, run, build a workflow. File issues for anything confusing.
+2. **Read [knowledge-base/GOTCHAS.md](knowledge-base/GOTCHAS.md)** before touching code — there are conventions (the `TAG` logging pattern, `FOR UPDATE SKIP LOCKED` as the queue primitive, no generic Redis caching, etc.) that you'll want to know up front.
+3. **PRs welcome** for: more test coverage, fixing the known issues listed in [product/status.md](product/status.md), and anything on the Phase 2 list above.
+
+Conventional commits, feature branches off `main`. See [knowledge-base/](knowledge-base/) for the full developer-facing conventions.
 
 ---
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) — use it however you want, including commercially. Attribution appreciated, not required.
 
 ---
 
 <p align="center">
-  Built with ❤️ for durable AI agent workflows
+  Built for AI teams that need durability today and don't want to operate Temporal.<br>
+  <a href="https://duraflow-docs.vercel.app"><strong>Read the docs →</strong></a>
 </p>
