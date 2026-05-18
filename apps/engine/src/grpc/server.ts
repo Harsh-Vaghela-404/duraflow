@@ -5,6 +5,7 @@ import { Pool } from "pg";
 import Redis from "ioredis";
 import { HealthService } from "./health.service";
 import { AgentServiceImpl } from "./agent.service";
+import { WorkflowExecutor } from "../services/workflow-executor";
 
 // any: @grpc/reflection has no bundled TypeScript declarations
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -37,7 +38,7 @@ const agentPackageDef = protoLoader.loadSync(AGENT_PROTO_PATH, protoOptions);
 const healthProto = grpc.loadPackageDefinition(healthPackageDef) as any;
 const agentProto = grpc.loadPackageDefinition(agentPackageDef) as any;
 
-export function createGrpcServer(pool: Pool, redis: Redis): grpc.Server {
+export function createGrpcServer(pool: Pool, redis: Redis, executor: WorkflowExecutor): grpc.Server {
   const server = new grpc.Server({
     "grpc.max_receive_message_length": 4 * 1024 * 1024,
     "grpc.max_send_message_length": 4 * 1024 * 1024,
@@ -52,7 +53,7 @@ export function createGrpcServer(pool: Pool, redis: Redis): grpc.Server {
     watch: healthService.watch.bind(healthService),
   });
 
-  const agentService = new AgentServiceImpl(pool);
+  const agentService = new AgentServiceImpl(pool, executor);
   server.addService(agentProto.duraflow.AgentService.service, {
     submitTask: agentService.submitTask.bind(agentService),
     getTaskStatus: agentService.getTaskStatus.bind(agentService),

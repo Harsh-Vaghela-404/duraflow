@@ -6,7 +6,7 @@ import Piscina from 'piscina';
 import { StepRepository } from '../repositories/step.repository';
 import { TaskRepository } from '../repositories/task.repository';
 import { RollbackOrchestrator } from './rollback-orchestrator';
-import { TaskEntity } from '../db/task.entity';
+import { TaskEntity, taskStatus } from '../db/task.entity';
 import type { IPCRequest, IPCResponse } from '../workers/ipc-client';
 import { PISCINA_MAX_QUEUE, PISCINA_IDLE_TIMEOUT_MS } from '../constants/engine';
 
@@ -43,6 +43,7 @@ export class WorkflowExecutor {
   private taskRepo: TaskRepository;
   private rollback: RollbackOrchestrator;
   private pool: Piscina;
+  private abortControllers = new Map<string, AbortController>();
 
   constructor(dbPool: Pool, piscinaPool: Piscina) {
     this.stepRepo = new StepRepository(dbPool);
@@ -54,6 +55,9 @@ export class WorkflowExecutor {
   async execute(task: TaskEntity): Promise<unknown> {
     console.log(`${TAG} task ${task.id} submitted to worker pool`);
 
+    const controller = new AbortController();
+    this.abortControllers.set(task.id, controller);
+
     const { port1, port2 } = new MessageChannel();
 
     port1.on('message', async (req: IPCRequest) => {
@@ -64,8 +68,22 @@ export class WorkflowExecutor {
     try {
       const result = await this.pool.run(
         { taskId: task.id, workflowName: task.workflow_name, input: task.input, port: port2 },
-        { transferList: [port2] },
+        { transferList: [port2], signal: controller.signal },
       );
+
+      // Guard against a cancel that arrived after the worker finished but before
+      // we could abort it. One cheap SELECT prevents updateCompleted from clobbering
+      // the cancelled status and leaving compensatable steps un-rolled-back.
+      const freshTask = await this.taskRepo.findById(task.id);
+      if (freshTask?.status === taskStatus.CANCELLED) {
+        console.log(`${TAG} task ${task.id} cancel landed after worker finished — triggering rollback`);
+        try {
+          await this.rollback.rollback(task.id);
+        } catch (rollbackErr) {
+          console.error(`${TAG} post-cancel rollback failed for task ${task.id}:`, rollbackErr);
+        }
+        return;
+      }
 
       await this.taskRepo.updateCompleted(task.id, result);
       console.log(`${TAG} task ${task.id} completed`);
@@ -74,6 +92,16 @@ export class WorkflowExecutor {
       if (this.isStepRetry(err)) {
         console.log(`${TAG} task ${task.id} retry scheduled in ${err.delay}ms (attempt ${err.attempt})`);
         await this.taskRepo.scheduleRetry(task.id, err.delay, err.attempt, err.originalError);
+        return;
+      }
+
+      if (this.isAbortError(err)) {
+        console.log(`${TAG} task ${task.id} aborted by cancel signal — triggering rollback`);
+        try {
+          await this.rollback.rollback(task.id);
+        } catch (rollbackErr) {
+          console.error(`${TAG} post-abort rollback failed for task ${task.id}:`, rollbackErr);
+        }
         return;
       }
 
@@ -90,8 +118,19 @@ export class WorkflowExecutor {
       }
       throw err;
     } finally {
+      this.abortControllers.delete(task.id);
       port1.removeAllListeners();
       port1.close();
+    }
+  }
+
+  cancel(taskId: string): void {
+    const controller = this.abortControllers.get(taskId);
+    if (controller) {
+      controller.abort();
+      console.log(`${TAG} abort signal sent for task ${taskId}`);
+    } else {
+      console.warn(`${TAG} cancel called for task ${taskId} but no active execution found`);
     }
   }
 
@@ -106,6 +145,12 @@ export class WorkflowExecutor {
 
   private isStepRetry(err: unknown): err is StepRetryPayload {
     return typeof err === 'object' && err !== null && '__stepRetry' in err;
+  }
+
+  private isAbortError(err: unknown): boolean {
+    if (typeof err !== 'object' || err === null) return false;
+    const e = err as { name?: string; code?: string };
+    return e.name === 'AbortError' || e.code === 'ABORT_ERR';
   }
 
   private async handleWorkerMessage(request: IPCRequest): Promise<IPCResponse> {

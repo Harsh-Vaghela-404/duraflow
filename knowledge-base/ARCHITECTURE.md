@@ -17,7 +17,7 @@
 | `tsx` | n/a | TS runtime for dev + worker children | `apps/engine/package.json` |
 | `uuid` | 10.x | Generates `worker-<id>` at startup only (Postgres generates row UUIDs) | `apps/engine/src/index.ts:13,25` |
 | `dotenv` | 17.x | Load `.env` for engine + migrate | `apps/engine/src/db/index.ts:1`, `apps/engine/src/index.ts:1` |
-| `prettier` | 3.7.x | Root formatter (no ESLint config exists in repo) | `package.json:format` |
+| `prettier` | 3.7.x | Root formatter (integrated with ESLint via `eslint-config-prettier`) | `package.json:format`, `eslint.config.mjs` |
 | TypeScript | 5.9.2 | strict + noUncheckedIndexedAccess + noImplicitReturns | `packages/typescript-config/base.json` |
 
 ## Monorepo Layout
@@ -137,10 +137,10 @@ Defined in `packages/proto/agent.service.proto`. Bound on `0.0.0.0:50051` (confi
 |-----|----------------------|---------|------|-------------|
 | `SubmitTask(workflow_name, input bytes)` → `task_id` | Yes (line 51) | `AgentServiceImpl.submitTask` | none | Inserts a `pending` row in `agent_tasks`. |
 | `GetTaskStatus(task_id)` → `{status, output bytes, error bytes}` | Yes (line 52) | `AgentServiceImpl.getTaskStatus` | none | Looks up by id; returns `NOT_FOUND` if missing. Status is returned as the enum string `.toUpperCase()` (e.g., `'PENDING'`). |
-| `CancelTask(task_id)` → `success` | Yes (line 53) | `AgentServiceImpl.cancelTask` | none | Sets status to `cancelled` if currently `pending` or `running`. `FAILED_PRECONDITION` otherwise. |
-| `GetStep(task_id, step_key)` → `{found, completed, output bytes}` | **Not wired** | — | none | Reserved for SDK crash recovery. |
-| `CompleteStep(task_id, step_key, output bytes)` → `success` | **Not wired** | — | none | Reserved for SDK crash recovery. |
-| `FailStep(task_id, step_key, error bytes)` → `success` | **Not wired** | — | none | Reserved for SDK crash recovery. |
+| `CancelTask(task_id)` → `success` | Yes (line 53) | `AgentServiceImpl.cancelTask` | none | Sets status to `cancelled` if currently `pending` or `running`. `FAILED_PRECONDITION` otherwise. For `running` tasks, asynchronously triggers `RollbackOrchestrator` so completed steps are compensated. |
+| `GetStep(task_id, step_key)` → `{found, completed, output bytes}` | Yes (line 60) | `AgentServiceImpl.getStep` | none | SDK crash recovery — checks if a step already completed. |
+| `CompleteStep(task_id, step_key, output bytes)` → `success` | Yes (line 61) | `AgentServiceImpl.completeStep` | none | SDK crash recovery — marks a step completed. |
+| `FailStep(task_id, step_key, error bytes)` → `success` | Yes (line 62) | `AgentServiceImpl.failStep` | none | SDK crash recovery — marks a step failed. |
 
 ### HealthService (`packages/proto/health.service.proto`)
 
@@ -204,7 +204,7 @@ If auth is added in the future, it should be a single gRPC interceptor reading f
 
 ```
 typecheck: turbo run check-types
-lint:      turbo run lint                            # advisory — no ESLint config exists
+lint:      turbo run lint                            # eslint.config.mjs at root — typescript-eslint + no-floating-promises
 test:      npm run test --workspace=apps/engine      # unit always; integration/e2e need .env + docker
 build:     turbo run build
 format:    prettier --write "**/*.{ts,tsx,md}"

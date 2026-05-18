@@ -3,6 +3,7 @@ import { ServerUnaryCall, sendUnaryData } from '@grpc/grpc-js';
 import { Pool } from 'pg';
 import { TaskRepository } from '../repositories/task.repository';
 import { StepRepository } from '../repositories/step.repository';
+import { WorkflowExecutor } from '../services/workflow-executor';
 import { taskStatus } from '../db/task.entity';
 
 const TAG = '[agent-service]';
@@ -10,10 +11,12 @@ const TAG = '[agent-service]';
 export class AgentServiceImpl {
     private taskRepo: TaskRepository;
     private stepRepo: StepRepository;
+    private executor: WorkflowExecutor;
 
-    constructor(pool: Pool) {
+    constructor(pool: Pool, executor: WorkflowExecutor) {
         this.taskRepo = new TaskRepository(pool);
         this.stepRepo = new StepRepository(pool);
+        this.executor = executor;
     }
 
     async submitTask(call: ServerUnaryCall<any, any>, callback: sendUnaryData<any>) {
@@ -81,8 +84,16 @@ export class AgentServiceImpl {
                 });
             }
 
+            const wasRunning = task.status === taskStatus.RUNNING;
             await this.taskRepo.updateStatus(task_id, taskStatus.CANCELLED);
             callback(null, { success: true });
+
+            if (wasRunning) {
+                // Signal the executor to abort the in-flight Piscina run.
+                // WorkflowExecutor.execute() catches the AbortError and triggers
+                // rollback from there — keeping rollback ownership in one place.
+                this.executor.cancel(task_id);
+            }
         } catch (err) {
             console.error(`${TAG} cancelTask error:`, err);
             callback({ code: grpc.status.INTERNAL, message: String(err) });

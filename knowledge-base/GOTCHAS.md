@@ -140,16 +140,18 @@ Piscina structured-clones the rejection reason, which destroys the `StepRetryErr
 
 ## Tech Debt & Known Issues
 
-- **Cancellation race with executor** — `CancelTask` sets `agent_tasks.status = 'cancelled'` but does not signal the worker. If the worker's `updateCompleted` lands after the cancel, the task ends up `completed`. There is no in-flight cancellation today. Files: `apps/engine/src/grpc/agent.service.ts:54-78`, `apps/engine/src/services/workflow-executor.ts:62-95`.
-- **Cancellation does not auto-rollback** — `Flow 6` (Cancellation) does not invoke `RollbackOrchestrator`. If the workflow had completed steps with compensations, they remain in `completed` state and the task ends in `cancelled` (not `rolled_back`). Files: `apps/engine/src/grpc/agent.service.ts:72`.
-- **`GetStep` / `CompleteStep` / `FailStep` RPCs are declared but not wired** — Defined in `packages/proto/agent.service.proto:64-87` but absent from `server.ts:50-54`. Clients calling them get `UNIMPLEMENTED`. Files: `apps/engine/src/grpc/server.ts:49-54`, `packages/proto/agent.service.proto`.
-- **No ESLint config files exist** despite every `package.json` having `"lint": "eslint ."`. `turbo run lint` is advisory only today. Treat `turbo run check-types`, `npm run test`, and `turbo run build` as the hard guarantees. Files: every workspace `package.json`.
-- **`ts-proto` generated types in `packages/proto/generated/` are not imported by the engine** — the engine still uses `protoLoader.loadSync` against raw `.proto` files at runtime. Type safety on `call.request` is therefore `any`. Files: `apps/engine/src/grpc/server.ts:28-32`.
+- **Cancellation does not interrupt an in-flight worker** — `CancelTask` sets `agent_tasks.status = 'cancelled'` but cannot send a signal to a running Piscina thread. The worker will run to completion. `WorkflowExecutor.execute()` re-fetches task status after the worker returns and, if cancelled, triggers rollback instead of completing. This means a cancelled task may still consume CPU time in the worker. True mid-execution interruption would require a cancellation token passed into the worker. Files: `apps/engine/src/services/workflow-executor.ts`.
+- **`ts-proto` generated types are not used by the engine server** — `packages/proto/generated/agent.service.ts` uses camelCase field names (ts-proto convention) while the engine uses `proto-loader` with `keepCase: true` which preserves `snake_case`. Directly importing the generated types as handler request/response shapes would be misleading. Fixing this properly requires either removing `keepCase: true` from proto-loader (breaking all handlers) or writing manual snake_case interfaces. The current `any` on `call.request` is the documented trade-off. Files: `apps/engine/src/grpc/server.ts`, `packages/proto/generated/`.
 - **`apps/dashboard/` is empty** — directory exists, no `package.json`, no sources. Not part of workspaces in practice.
 - **No `.prettierrc` despite the root `format` script** — Prettier runs with defaults.
 - **Heartbeat default is 5s, reaper threshold is 300s** — `300/5 = 60` heartbeats before reaping. If you tune one, audit the ratio. Files: `apps/engine/src/services/heartbeat.service.ts:9`, `apps/engine/src/index.ts:21`.
 - **`HealthService` is wired but its DB/Redis impl is minimal** — verify the `Check` does not introduce a heavy roundtrip; per `rules/coding-style.md`, it should be `SELECT 1` at most. Files: `apps/engine/src/grpc/health.service.ts`.
 - **Qdrant is in `docker-compose.yml` but no client lib installed** — planned for future vector search; not part of any code path today. Files: `docker-compose.yml`.
+
+Previously resolved:
+- ~~Cancellation does not auto-rollback~~ — Fixed: `cancelTask` now triggers `RollbackOrchestrator` for `RUNNING` tasks. `WorkflowExecutor.execute()` checks for post-execution cancellation and routes to rollback. (`agent.service.ts`, `workflow-executor.ts`)
+- ~~`GetStep` / `CompleteStep` / `FailStep` RPCs not wired~~ — All six RPCs are implemented in `agent.service.ts` and bound in `server.ts`.
+- ~~No ESLint config~~ — `eslint.config.mjs` at the repo root uses `typescript-eslint` with `no-floating-promises`, `prefer-const`, `no-var`, and test-file relaxations.
 
 ## "Why Is It Done This Way?"
 

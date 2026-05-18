@@ -57,7 +57,7 @@ async function main() {
   console.log(`${TAG} redis connected`);
 
   // gRPC
-  const grpcServer = createGrpcServer(pool, redis);
+  const grpcServer = createGrpcServer(pool, redis, executor);
   await startGrpcServer(grpcServer, config.port);
 
   // Reaper
