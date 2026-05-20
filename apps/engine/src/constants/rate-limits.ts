@@ -7,10 +7,10 @@ export interface ApiRateLimitConfig {
 }
 
 export const DEFAULT_API_LIMITS: Record<string, ApiRateLimitConfig> = {
-    openai:    { name: 'openai',    rpm: 10_000, tpm: 2_000_000, capacity: 200, ttlSeconds: 300 },
+    openai: { name: 'openai', rpm: 10_000, tpm: 2_000_000, capacity: 200, ttlSeconds: 300 },
     anthropic: { name: 'anthropic', rpm: 40_000, tpm: 5_000_000, capacity: 500, ttlSeconds: 300 },
-    google:    { name: 'google',    rpm: 60_000, tpm: 4_000_000, capacity: 500, ttlSeconds: 300 },
-    cohere:    { name: 'cohere',    rpm: 10_000, tpm: 1_000_000, capacity: 100, ttlSeconds: 300 },
+    google: { name: 'google', rpm: 60_000, tpm: 4_000_000, capacity: 500, ttlSeconds: 300 },
+    cohere: { name: 'cohere', rpm: 10_000, tpm: 1_000_000, capacity: 100, ttlSeconds: 300 },
 };
 
 const FALLBACK_LIMIT: Omit<ApiRateLimitConfig, 'name'> = {
@@ -30,19 +30,25 @@ export function getApiRateLimitConfig(
     const envKey = key.toUpperCase();
     const base = DEFAULT_API_LIMITS[key] ?? { ...FALLBACK_LIMIT, name: key };
 
-    const rpm = overrides?.rpm ?? parseInt(process.env[`RATE_LIMIT_${envKey}_RPM`] ?? String(base.rpm), 10);
-    const tpm = overrides?.tpm ?? parseInt(process.env[`RATE_LIMIT_${envKey}_TPM`] ?? String(base.tpm), 10);
+    const rpm =
+        overrides?.rpm ?? parseInt(process.env[`RATE_LIMIT_${envKey}_RPM`] ?? String(base.rpm), 10);
+    const tpm =
+        overrides?.tpm ?? parseInt(process.env[`RATE_LIMIT_${envKey}_TPM`] ?? String(base.tpm), 10);
     const capacity =
-        overrides?.capacity ?? parseInt(process.env[`RATE_LIMIT_${envKey}_CAPACITY`] ?? String(base.capacity), 10);
+        overrides?.capacity ??
+        parseInt(process.env[`RATE_LIMIT_${envKey}_CAPACITY`] ?? String(base.capacity), 10);
     const ttlSeconds =
-        overrides?.ttlSeconds ?? parseInt(process.env[`RATE_LIMIT_${envKey}_TTL`] ?? String(base.ttlSeconds), 10);
+        overrides?.ttlSeconds ??
+        parseInt(process.env[`RATE_LIMIT_${envKey}_TTL`] ?? String(base.ttlSeconds), 10);
 
     if (!Number.isFinite(rpm) || rpm <= 0)
         throw new Error(`RATE_LIMIT_${envKey}_RPM must be a positive integer, got: ${rpm}`);
     if (!Number.isFinite(tpm) || tpm <= 0)
         throw new Error(`RATE_LIMIT_${envKey}_TPM must be a positive integer, got: ${tpm}`);
     if (!Number.isFinite(capacity) || capacity <= 0)
-        throw new Error(`RATE_LIMIT_${envKey}_CAPACITY must be a positive integer, got: ${capacity}`);
+        throw new Error(
+            `RATE_LIMIT_${envKey}_CAPACITY must be a positive integer, got: ${capacity}`,
+        );
     if (!Number.isFinite(ttlSeconds) || ttlSeconds <= 0)
         throw new Error(`RATE_LIMIT_${envKey}_TTL must be a positive integer, got: ${ttlSeconds}`);
 
