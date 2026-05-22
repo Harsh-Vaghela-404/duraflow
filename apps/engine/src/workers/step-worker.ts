@@ -11,7 +11,11 @@ import {
 } from '@duraflow/sdk';
 import { calculateBackOff } from '../utils/backoff';
 import { StepRetryError } from '../errors/step-retry.error';
+import { RateLimitTimeoutError } from '../errors/rate-limit-timeout.error';
 import { IPCClient } from './ipc-client';
+
+const RATE_LIMIT_POLL_INTERVAL_MS = 100;
+const RATE_LIMIT_DEFAULT_TIMEOUT_MS = 60_000;
 
 const TAG = '[step-worker]';
 
@@ -58,6 +62,28 @@ function createStepRunner(taskId: string, workflowName: string, ipc: IPCClient):
       const step = await ipc.send<{ id: string; attempt: number }>('STEP_CREATE_OR_FIND', { taskId, stepKey: name });
       const currentAttempt = step.attempt || 1;
       console.log(`[step-worker] ${name} - executing (attempt ${currentAttempt})`);
+
+      if (opts?.rateLimit) {
+        const { api, tokens = 1, timeoutMs = RATE_LIMIT_DEFAULT_TIMEOUT_MS } = opts.rateLimit;
+        const deadline = Date.now() + timeoutMs;
+        let acquired = false;
+
+        while (Date.now() < deadline) {
+          const allowed = await ipc.send<boolean>('RATE_LIMIT_ACQUIRE', { api, tokens });
+          if (allowed) {
+            console.log(`${TAG} ${name} - acquired rate limit token for API '${api}'`);
+            acquired = true;
+            break;
+          }
+          const remaining = deadline - Date.now();
+          if (remaining <= RATE_LIMIT_POLL_INTERVAL_MS) break;
+          await new Promise((resolve) => setTimeout(resolve, RATE_LIMIT_POLL_INTERVAL_MS));
+        }
+
+        if (!acquired) {
+          throw new RateLimitTimeoutError(api, timeoutMs);
+        }
+      }
 
       let compensationKey: string | undefined;
       if (opts?.compensation) {

@@ -9,7 +9,8 @@ export type IPCMessageType =
   | 'STEP_CREATE_OR_FIND'
   | 'STEP_COMPLETE'
   | 'STEP_FAIL'
-  | 'STEP_INCREMENT';
+  | 'STEP_INCREMENT'
+  | 'RATE_LIMIT_ACQUIRE';
 
 export interface IPCRequest {
   id: string;

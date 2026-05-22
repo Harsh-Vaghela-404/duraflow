@@ -6,6 +6,7 @@ import Piscina from 'piscina';
 import { StepRepository } from '../repositories/step.repository';
 import { TaskRepository } from '../repositories/task.repository';
 import { RollbackOrchestrator } from './rollback-orchestrator';
+import { RateLimiter } from './rate-limiter';
 import { TaskEntity, taskStatus } from '../db/task.entity';
 import type { IPCRequest, IPCResponse } from '../workers/ipc-client';
 import { PISCINA_MAX_QUEUE, PISCINA_IDLE_TIMEOUT_MS } from '../constants/engine';
@@ -43,13 +44,15 @@ export class WorkflowExecutor {
   private taskRepo: TaskRepository;
   private rollback: RollbackOrchestrator;
   private pool: Piscina;
+  private rateLimiter: RateLimiter | undefined;
   private abortControllers = new Map<string, AbortController>();
 
-  constructor(dbPool: Pool, piscinaPool: Piscina) {
+  constructor(dbPool: Pool, piscinaPool: Piscina, rateLimiter?: RateLimiter) {
     this.stepRepo = new StepRepository(dbPool);
     this.taskRepo = new TaskRepository(dbPool);
     this.rollback = new RollbackOrchestrator(dbPool);
     this.pool = piscinaPool;
+    this.rateLimiter = rateLimiter;
   }
 
   async execute(task: TaskEntity): Promise<unknown> {
@@ -180,6 +183,19 @@ export class WorkflowExecutor {
           const { stepId } = request.payload as { stepId: string };
           await this.stepRepo.incrementAttempt(stepId);
           return { id: request.id, success: true };
+        }
+        case 'RATE_LIMIT_ACQUIRE': {
+          if (!this.rateLimiter) {
+            return { id: request.id, success: true, data: true };
+          }
+          const { api, tokens } = request.payload as { api: string; tokens: number };
+          try {
+            const allowed = await this.rateLimiter.acquire(api, tokens);
+            return { id: request.id, success: true, data: Boolean(allowed) };
+          } catch (rlErr) {
+            console.warn(`${TAG} rate limiter error for API '${api}', allowing through:`, rlErr);
+            return { id: request.id, success: true, data: true };
+          }
         }
         default:
           return { id: request.id, success: false, error: { message: 'Unknown IPC message type', name: 'Error' } };

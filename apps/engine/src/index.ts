@@ -38,11 +38,11 @@ pool.on('error', (err) => console.error(`${TAG} idle client error:`, err));
 
 const taskRepo = new TaskRepository(pool);
 const heartbeat = new HeartbeatService(taskRepo);
-const executor = new WorkflowExecutor(pool, piscina);
 
 // Components
 let poller: Poller | null = null;
 let reaper: Reaper | null = null;
+let executor: WorkflowExecutor | null = null;
 
 async function main() {
     console.log(`${TAG} starting engine... (worker: ${config.workerId})`);
@@ -68,6 +68,8 @@ async function main() {
     await rateLimiter.init();
     console.log(`${TAG} rate limiter ready`);
 
+    executor = new WorkflowExecutor(pool, piscina, rateLimiter);
+
     // gRPC
     const grpcServer = createGrpcServer(pool, redis, executor);
     await startGrpcServer(grpcServer, config.port);
@@ -79,7 +81,7 @@ async function main() {
     // Backpressure
     const monitor = new EventLoopMonitor();
     const checkBackpressure = () => {
-        const queueSize = executor.queueSize;
+        const queueSize = executor!.queueSize;
         const lag = monitor.lag;
 
         if (queueSize >= config.maxQueueSize) {
@@ -100,7 +102,7 @@ async function main() {
         workerId: config.workerId,
         batchSize: 10,
         checkBackpressure,
-        onTaskReceived: (task) => runTask(executor, heartbeat, task),
+        onTaskReceived: (task) => runTask(executor!, heartbeat, task),
     });
     poller.start();
 
@@ -113,7 +115,7 @@ async function shutdown(signal: string) {
     heartbeat.stopAll();
     if (poller) await poller.stop();
     if (reaper) await reaper.stop();
-    await executor.destroy();
+    if (executor) await executor.destroy();
 
     await pool.end();
     await redis.quit();
