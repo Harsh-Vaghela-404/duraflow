@@ -41,6 +41,26 @@ message CancelTaskResponse {
     bool success = 1;  // False if already completed/failed
 }
 
+message GetRateLimitStatusRequest {
+    string api_name = 1;
+}
+
+message GetRateLimitStatusResponse {
+    string api_name = 1;
+    int64 remaining_tokens = 2;
+    int64 capacity = 3;
+    int64 rate_per_minute = 4;
+    int64 ttl_seconds = 5;
+}
+
+message ResetRateLimitRequest {
+    string api_name = 1;
+}
+
+message ResetRateLimitResponse {
+    bool success = 1;
+}
+
 // Step operations for memoization and crash recovery
 message GetStepRequest {
     string task_id = 1;
@@ -78,7 +98,9 @@ service AgentService {
     rpc SubmitTask(SubmitTaskRequest) returns (SubmitTaskResponse);
     rpc GetTaskStatus(GetTaskStatusRequest) returns (GetTaskStatusResponse);
     rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse);
-    
+    rpc GetRateLimitStatus(GetRateLimitStatusRequest) returns (GetRateLimitStatusResponse);
+    rpc ResetRateLimit(ResetRateLimitRequest) returns (ResetRateLimitResponse);
+
     // Step operations for SDK crash recovery
     rpc GetStep(GetStepRequest) returns (GetStepResponse);
     rpc CompleteStep(CompleteStepRequest) returns (CompleteStepResponse);

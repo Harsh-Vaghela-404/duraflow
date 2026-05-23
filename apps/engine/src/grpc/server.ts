@@ -6,6 +6,7 @@ import Redis from "ioredis";
 import { HealthService } from "./health.service";
 import { AgentServiceImpl } from "./agent.service";
 import { WorkflowExecutor } from "../services/workflow-executor";
+import { RateLimiter } from "../services/rate-limiter";
 
 // any: @grpc/reflection has no bundled TypeScript declarations
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -38,7 +39,7 @@ const agentPackageDef = protoLoader.loadSync(AGENT_PROTO_PATH, protoOptions);
 const healthProto = grpc.loadPackageDefinition(healthPackageDef) as any;
 const agentProto = grpc.loadPackageDefinition(agentPackageDef) as any;
 
-export function createGrpcServer(pool: Pool, redis: Redis, executor: WorkflowExecutor): grpc.Server {
+export function createGrpcServer(pool: Pool, redis: Redis, executor: WorkflowExecutor, rateLimiter?: RateLimiter): grpc.Server {
   const server = new grpc.Server({
     "grpc.max_receive_message_length": 4 * 1024 * 1024,
     "grpc.max_send_message_length": 4 * 1024 * 1024,
@@ -53,11 +54,13 @@ export function createGrpcServer(pool: Pool, redis: Redis, executor: WorkflowExe
     watch: healthService.watch.bind(healthService),
   });
 
-  const agentService = new AgentServiceImpl(pool, executor);
+  const agentService = new AgentServiceImpl(pool, executor, rateLimiter);
   server.addService(agentProto.duraflow.AgentService.service, {
     submitTask: agentService.submitTask.bind(agentService),
     getTaskStatus: agentService.getTaskStatus.bind(agentService),
     cancelTask: agentService.cancelTask.bind(agentService),
+    getRateLimitStatus: agentService.getRateLimitStatus.bind(agentService),
+    resetRateLimit: agentService.resetRateLimit.bind(agentService),
     getStep: agentService.getStep.bind(agentService),
     completeStep: agentService.completeStep.bind(agentService),
     failStep: agentService.failStep.bind(agentService),

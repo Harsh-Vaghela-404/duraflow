@@ -94,4 +94,10 @@ export class RateLimiter {
         )) as [number, number];
         return result[1] ?? 0;
     }
+
+    async reset(key: string): Promise<boolean> {
+        if (!this.sha) throw new Error('RateLimiter not initiated - call init() first');
+        await this.redis.del(this.toRedisKey(key));
+        return true;
+    }
 }

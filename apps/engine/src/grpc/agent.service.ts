@@ -4,6 +4,8 @@ import { Pool } from 'pg';
 import { TaskRepository } from '../repositories/task.repository';
 import { StepRepository } from '../repositories/step.repository';
 import { WorkflowExecutor } from '../services/workflow-executor';
+import { RateLimiter } from '../services/rate-limiter';
+import { getApiRateLimitConfig } from '../constants/rate-limits';
 import { taskStatus } from '../db/task.entity';
 
 const TAG = '[agent-service]';
@@ -12,19 +14,28 @@ export class AgentServiceImpl {
     private taskRepo: TaskRepository;
     private stepRepo: StepRepository;
     private executor: WorkflowExecutor;
+    private rateLimiter?: RateLimiter;
 
-    constructor(pool: Pool, executor: WorkflowExecutor) {
+    constructor(pool: Pool, executor: WorkflowExecutor, rateLimiter?: RateLimiter) {
         this.taskRepo = new TaskRepository(pool);
         this.stepRepo = new StepRepository(pool);
         this.executor = executor;
+        this.rateLimiter = rateLimiter;
     }
 
     async submitTask(call: ServerUnaryCall<any, any>, callback: sendUnaryData<any>) {
         try {
             const { workflow_name, input } = call.request;
 
-            if (!workflow_name || typeof workflow_name !== 'string' || workflow_name.trim() === '') {
-                return callback({ code: grpc.status.INVALID_ARGUMENT, message: 'workflow_name is required' });
+            if (
+                !workflow_name ||
+                typeof workflow_name !== 'string' ||
+                workflow_name.trim() === ''
+            ) {
+                return callback({
+                    code: grpc.status.INVALID_ARGUMENT,
+                    message: 'workflow_name is required',
+                });
             }
 
             let parsedInput: Record<string, unknown> = {};
@@ -32,7 +43,10 @@ export class AgentServiceImpl {
                 try {
                     parsedInput = JSON.parse(input.toString());
                 } catch {
-                    return callback({ code: grpc.status.INVALID_ARGUMENT, message: 'input must be valid JSON' });
+                    return callback({
+                        code: grpc.status.INVALID_ARGUMENT,
+                        message: 'input must be valid JSON',
+                    });
                 }
             }
 
@@ -49,7 +63,10 @@ export class AgentServiceImpl {
             const { task_id } = call.request;
 
             if (!task_id || typeof task_id !== 'string') {
-                return callback({ code: grpc.status.INVALID_ARGUMENT, message: 'task_id is required' });
+                return callback({
+                    code: grpc.status.INVALID_ARGUMENT,
+                    message: 'task_id is required',
+                });
             }
 
             const task = await this.taskRepo.findById(task_id);
@@ -71,7 +88,10 @@ export class AgentServiceImpl {
             const { task_id } = call.request;
 
             if (!task_id || typeof task_id !== 'string') {
-                return callback({ code: grpc.status.INVALID_ARGUMENT, message: 'task_id is required' });
+                return callback({
+                    code: grpc.status.INVALID_ARGUMENT,
+                    message: 'task_id is required',
+                });
             }
 
             const task = await this.taskRepo.findById(task_id);
@@ -105,10 +125,16 @@ export class AgentServiceImpl {
             const { task_id, step_key } = call.request;
 
             if (!task_id || typeof task_id !== 'string') {
-                return callback({ code: grpc.status.INVALID_ARGUMENT, message: 'task_id is required' });
+                return callback({
+                    code: grpc.status.INVALID_ARGUMENT,
+                    message: 'task_id is required',
+                });
             }
             if (!step_key || typeof step_key !== 'string') {
-                return callback({ code: grpc.status.INVALID_ARGUMENT, message: 'step_key is required' });
+                return callback({
+                    code: grpc.status.INVALID_ARGUMENT,
+                    message: 'step_key is required',
+                });
             }
 
             const step = await this.stepRepo.findByTaskAndKey(task_id, step_key);
@@ -132,15 +158,24 @@ export class AgentServiceImpl {
             const { task_id, step_key, output } = call.request;
 
             if (!task_id || typeof task_id !== 'string') {
-                return callback({ code: grpc.status.INVALID_ARGUMENT, message: 'task_id is required' });
+                return callback({
+                    code: grpc.status.INVALID_ARGUMENT,
+                    message: 'task_id is required',
+                });
             }
             if (!step_key || typeof step_key !== 'string') {
-                return callback({ code: grpc.status.INVALID_ARGUMENT, message: 'step_key is required' });
+                return callback({
+                    code: grpc.status.INVALID_ARGUMENT,
+                    message: 'step_key is required',
+                });
             }
 
             const step = await this.stepRepo.findByTaskAndKey(task_id, step_key);
             if (!step) {
-                return callback({ code: grpc.status.NOT_FOUND, message: `Step '${step_key}' not found` });
+                return callback({
+                    code: grpc.status.NOT_FOUND,
+                    message: `Step '${step_key}' not found`,
+                });
             }
 
             let parsed: unknown = null;
@@ -148,7 +183,10 @@ export class AgentServiceImpl {
                 try {
                     parsed = JSON.parse(output.toString());
                 } catch {
-                    return callback({ code: grpc.status.INVALID_ARGUMENT, message: 'output must be valid JSON' });
+                    return callback({
+                        code: grpc.status.INVALID_ARGUMENT,
+                        message: 'output must be valid JSON',
+                    });
                 }
             }
             await this.stepRepo.updateCompleted(step.id, parsed);
@@ -164,15 +202,24 @@ export class AgentServiceImpl {
             const { task_id, step_key, error } = call.request;
 
             if (!task_id || typeof task_id !== 'string') {
-                return callback({ code: grpc.status.INVALID_ARGUMENT, message: 'task_id is required' });
+                return callback({
+                    code: grpc.status.INVALID_ARGUMENT,
+                    message: 'task_id is required',
+                });
             }
             if (!step_key || typeof step_key !== 'string') {
-                return callback({ code: grpc.status.INVALID_ARGUMENT, message: 'step_key is required' });
+                return callback({
+                    code: grpc.status.INVALID_ARGUMENT,
+                    message: 'step_key is required',
+                });
             }
 
             const step = await this.stepRepo.findByTaskAndKey(task_id, step_key);
             if (!step) {
-                return callback({ code: grpc.status.NOT_FOUND, message: `Step '${step_key}' not found` });
+                return callback({
+                    code: grpc.status.NOT_FOUND,
+                    message: `Step '${step_key}' not found`,
+                });
             }
 
             let parsed: unknown = { message: 'Unknown error' };
@@ -180,13 +227,77 @@ export class AgentServiceImpl {
                 try {
                     parsed = JSON.parse(error.toString());
                 } catch {
-                    return callback({ code: grpc.status.INVALID_ARGUMENT, message: 'error must be valid JSON' });
+                    return callback({
+                        code: grpc.status.INVALID_ARGUMENT,
+                        message: 'error must be valid JSON',
+                    });
                 }
             }
             await this.stepRepo.updateFailed(step.id, parsed);
             callback(null, { success: true });
         } catch (err) {
             console.error(`${TAG} failStep error:`, err);
+            callback({ code: grpc.status.INTERNAL, message: String(err) });
+        }
+    }
+
+    async getRateLimitStatus(call: ServerUnaryCall<any, any>, callback: sendUnaryData<any>) {
+        try {
+            const { api_name } = call.request;
+
+            if (!api_name || typeof api_name !== 'string' || api_name.trim() === '') {
+                return callback({
+                    code: grpc.status.INVALID_ARGUMENT,
+                    message: 'api_name is required',
+                });
+            }
+
+            if (!this.rateLimiter) {
+                return callback({
+                    code: grpc.status.FAILED_PRECONDITION,
+                    message: 'rate limiting is not enabled',
+                });
+            }
+
+            const config = getApiRateLimitConfig(api_name.trim());
+            const remaining = await this.rateLimiter.getRemaining(api_name.trim());
+
+            callback(null, {
+                api_name: config.name,
+                remaining_tokens: remaining,
+                capacity: config.capacity,
+                rate_per_minute: config.rpm,
+                ttl_seconds: config.ttlSeconds,
+            });
+        } catch (err) {
+            console.error(`${TAG} getRateLimitStatus error:`, err);
+            callback({ code: grpc.status.INTERNAL, message: String(err) });
+        }
+    }
+
+    async resetRateLimit(call: ServerUnaryCall<any, any>, callback: sendUnaryData<any>) {
+        try {
+            const { api_name } = call.request;
+
+            if (!api_name || typeof api_name !== 'string' || api_name.trim() === '') {
+                return callback({
+                    code: grpc.status.INVALID_ARGUMENT,
+                    message: 'api_name is required',
+                });
+            }
+
+            if (!this.rateLimiter) {
+                return callback({
+                    code: grpc.status.FAILED_PRECONDITION,
+                    message: 'rate limiting is not enabled',
+                });
+            }
+
+            await this.rateLimiter.reset(api_name.trim());
+            console.log(`${TAG} rate limit reset for API '${api_name.trim()}'`);
+            callback(null, { success: true });
+        } catch (err) {
+            console.error(`${TAG} resetRateLimit error:`, err);
             callback({ code: grpc.status.INTERNAL, message: String(err) });
         }
     }

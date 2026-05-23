@@ -71,7 +71,7 @@ async function main() {
     executor = new WorkflowExecutor(pool, piscina, rateLimiter);
 
     // gRPC
-    const grpcServer = createGrpcServer(pool, redis, executor);
+    const grpcServer = createGrpcServer(pool, redis, executor, rateLimiter);
     await startGrpcServer(grpcServer, config.port);
 
     // Reaper
