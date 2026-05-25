@@ -1,5 +1,6 @@
 import Redis from 'ioredis';
 import { RATE_LIMIT_KEY_PREFIX } from '../constants/lock_ids';
+import { RateLimitTimeoutError } from '../errors/rate-limit-timeout.error';
 
 export class RateLimiter {
     private sha: string | null = null;
@@ -78,7 +79,7 @@ export class RateLimiter {
             if (allowed) return;
             await new Promise((resolve) => setTimeout(resolve, 100));
         }
-        throw new Error(`Rate limit timeout after ${timeoutMs}ms for key '${key}'`);
+        throw new RateLimitTimeoutError(key, timeoutMs);
     }
 
     async getRemaining(key: string): Promise<number> {
