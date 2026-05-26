@@ -1,0 +1,50 @@
+[tool.poetry]
+name = "duraflow"
+version = "0.1.0"
+description = "Durable workflow engine for AI agents — crash recovery, sagas, and step memoization"
+authors = ["Duraflow <noreply@duraflow.dev>"]
+license = "MIT"
+readme = "README.md"
+packages = [{ include = "duraflow", from = "src" }]
+homepage = "https://duraflow.dev"
+repository = "https://github.com/duraflow/duraflow"
+keywords = ["workflow", "agents", "durable", "saga", "grpc"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Libraries",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Typing :: Typed",
+]
+
+[tool.poetry.dependencies]
+python = ">=3.9"
+grpcio = ">=1.50.0,<2.0.0"
+
+[tool.poetry.group.dev.dependencies]
+grpcio-tools = ">=1.50.0,<2.0.0"
+pytest = ">=7.0.0"
+pytest-asyncio = ">=0.21.0"
+mypy = ">=1.0.0"
+grpc-stubs = ">=1.24.0"
+
+[tool.poetry.scripts]
+generate = "duraflow._scripts.generate:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.9"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
