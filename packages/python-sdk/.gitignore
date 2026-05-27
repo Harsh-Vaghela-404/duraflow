@@ -6,4 +6,6 @@ __pycache__/
 .ruff_cache/
 dist/
 *.egg-info/
-src/duraflow/_generated/
+src/duraflow/_generated/**/*_pb2.py
+src/duraflow/_generated/**/*_pb2_grpc.py
+src/duraflow/_generated/**/__pycache__/

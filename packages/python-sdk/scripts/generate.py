@@ -6,8 +6,9 @@ import os
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
-proto_path = os.path.join(script_dir, "..", "..", "..", "..", "proto")  # 4 levels up
-out_path   = os.path.join(script_dir, "..", "_generated")               # 1 level up
+proto_path = os.path.join(script_dir, "..", "..", "proto")
+
+out_path = os.path.join(script_dir, "..", "src", "duraflow", "_generated")
 
 def main() -> None:
     protoc.main([
