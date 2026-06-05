@@ -64,6 +64,10 @@ export function createGrpcServer(pool: Pool, redis: Redis, executor: WorkflowExe
     getStep: agentService.getStep.bind(agentService),
     completeStep: agentService.completeStep.bind(agentService),
     failStep: agentService.failStep.bind(agentService),
+    dequeueTask: agentService.dequeueTask.bind(agentService),
+    heartbeat: agentService.heartbeat.bind(agentService),
+    completeTask: agentService.completeTask.bind(agentService),
+    failTask: agentService.failTask.bind(agentService),
   });
 
   // reflection for grpcurl debugging

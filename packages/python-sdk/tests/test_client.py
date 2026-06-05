@@ -70,3 +70,11 @@ async def test_operations_without_connection_raise() -> None:
     client = DuraflowClient("localhost", 50051)
     with pytest.raises(RuntimeError, match="not connected"):
         await client.submit_task("flow", {})
+
+
+async def test_submit_task_sends_runtime(fake_stub: AsyncMock) -> None:
+    fake_stub.SubmitTask.return_value = make_response(task_id="t-1")
+    client = _client_with_stub(fake_stub)
+    await client.submit_task("flow", {"a": 1}, runtime="python")
+    sent = fake_stub.SubmitTask.call_args.args[0]
+    assert sent.runtime == "python"

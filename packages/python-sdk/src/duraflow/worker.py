@@ -3,16 +3,19 @@ from __future__ import annotations
 import asyncio
 import importlib
 import inspect
+import json
 import logging
 import signal
+import uuid
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Optional
 
 import grpc.aio
 
-from duraflow._generated.agent import service_pb2_grpc
+from duraflow._generated.agent import service_pb2, service_pb2_grpc
 from duraflow.context import StepRunner, WorkflowContext
 from duraflow.decorators import get_workflow
+from duraflow.serialization import serialize
 
 logger = logging.getLogger("duraflow.worker")
 
@@ -26,9 +29,8 @@ class TaskAssignment:
     input: Any = None
 
 
-# Pluggable source of work. The engine currently exposes no dequeue RPC
-# (only step persistence: GetStep/CompleteStep/FailStep), so callers supply
-# their own dequeue strategy until that RPC lands.
+# Optional override for the source of work. By default the worker polls the
+# engine via the DequeueTask RPC; tests or custom setups may inject their own.
 DequeueFn = Callable[[], Awaitable[list[TaskAssignment]]]
 
 
@@ -57,6 +59,8 @@ class Worker:
         self._stub: Optional[service_pb2_grpc.AgentServiceStub] = None
         self._semaphore = asyncio.Semaphore(concurrency)
         self._shutdown = asyncio.Event()
+        self._worker_id = f"py-{uuid.uuid4().hex[:8]}"
+        self._heartbeat_interval = 5.0
 
     @staticmethod
     def load_modules(module_names: list[str]) -> None:
@@ -119,19 +123,62 @@ class Worker:
         self._shutdown.set()
 
     async def _poll(self) -> list[TaskAssignment]:
-        if self._dequeue is None:
-            logger.warning(
-                "no dequeue source configured; engine exposes no dequeue RPC yet"
+        if self._stub is None:
+            raise RuntimeError("Worker is not started. Call start() first.")
+        if self._dequeue is not None:
+            return await self._dequeue()
+        request = service_pb2.DequeueTaskRequest(  # type: ignore[attr-defined]
+            runtime="python", batch_size=self._concurrency, worker_id=self._worker_id
+        )
+        response = await self._stub.DequeueTask(request)
+        return [
+            TaskAssignment(
+                task_id=t.task_id,
+                workflow_name=t.workflow_name,
+                input=json.loads(t.input) if t.input else None,
             )
-            return []
-        return await self._dequeue()
+            for t in response.tasks
+        ]
+
+    async def execute_and_report(self, assignment: TaskAssignment) -> None:
+        """Run a task with a heartbeat loop, then report Complete/Fail to the engine."""
+        if self._stub is None:
+            raise RuntimeError("Worker is not started. Call start() first.")
+        hb = asyncio.create_task(self._heartbeat_loop(assignment.task_id))
+        try:
+            result = await self.execute_task(assignment)
+            await self._stub.CompleteTask(
+                service_pb2.CompleteTaskRequest(  # type: ignore[attr-defined]
+                    task_id=assignment.task_id, output=serialize(result)
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 — report failure, never crash the worker
+            logger.exception("task %s failed", assignment.task_id)
+            await self._stub.FailTask(
+                service_pb2.FailTaskRequest(  # type: ignore[attr-defined]
+                    task_id=assignment.task_id,
+                    error=serialize({"message": str(exc), "name": type(exc).__name__}),
+                )
+            )
+        finally:
+            hb.cancel()
+
+    async def _heartbeat_loop(self, task_id: str) -> None:
+        assert self._stub is not None
+        try:
+            while True:
+                await asyncio.sleep(self._heartbeat_interval)
+                await self._stub.Heartbeat(
+                    service_pb2.HeartbeatRequest(  # type: ignore[attr-defined]
+                        task_id=task_id, worker_id=self._worker_id
+                    )
+                )
+        except asyncio.CancelledError:
+            pass
 
     async def _run_guarded(self, assignment: TaskAssignment) -> None:
         async with self._semaphore:
-            try:
-                await self.execute_task(assignment)
-            except Exception:  # noqa: BLE001 — one task must not crash the worker
-                logger.exception("task %s failed", assignment.task_id)
+            await self.execute_and_report(assignment)
 
     async def _sleep_or_shutdown(self, seconds: float) -> None:
         try:

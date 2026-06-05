@@ -99,3 +99,49 @@ async def test_failing_task_does_not_crash_worker(fake_stub: AsyncMock) -> None:
     await worker._run_guarded(
         TaskAssignment(task_id="t1", workflow_name="boom", input=None)
     )
+
+
+async def test_execute_and_report_completes_task(fake_stub: AsyncMock) -> None:
+    fake_stub.GetStep.return_value = make_response(found=False, completed=False, output=b"")
+    fake_stub.CompleteStep.return_value = make_response(success=True)
+    fake_stub.CompleteTask.return_value = make_response(success=True)
+
+    @workflow("rep-ok")
+    async def rep_ok(ctx: WorkflowContext) -> int:
+        return await ctx.step.run("s", lambda: 7)
+
+    worker = Worker()
+    worker._stub = fake_stub
+    await worker.execute_and_report(
+        TaskAssignment(task_id="t1", workflow_name="rep-ok", input=None)
+    )
+    fake_stub.CompleteTask.assert_awaited_once()
+    assert fake_stub.FailTask.await_count == 0
+
+
+async def test_execute_and_report_fails_task(fake_stub: AsyncMock) -> None:
+    fake_stub.GetStep.return_value = make_response(found=False, completed=False, output=b"")
+    fake_stub.FailStep.return_value = make_response(success=True)
+    fake_stub.FailTask.return_value = make_response(success=True)
+
+    @workflow("rep-bad")
+    async def rep_bad(ctx: WorkflowContext) -> None:
+        raise RuntimeError("nope")
+
+    worker = Worker()
+    worker._stub = fake_stub
+    await worker.execute_and_report(
+        TaskAssignment(task_id="t1", workflow_name="rep-bad", input=None)
+    )
+    fake_stub.FailTask.assert_awaited_once()
+
+
+async def test_poll_uses_dequeue_rpc(fake_stub: AsyncMock) -> None:
+    fake_stub.DequeueTask.return_value = make_response(
+        tasks=[make_response(task_id="t9", workflow_name="w", input=b"{}")]
+    )
+    worker = Worker()
+    worker._stub = fake_stub
+    assignments = await worker._poll()
+    assert assignments[0].task_id == "t9"
+    assert assignments[0].workflow_name == "w"

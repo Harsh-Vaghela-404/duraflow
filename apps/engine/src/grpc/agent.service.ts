@@ -38,6 +38,14 @@ export class AgentServiceImpl {
                 });
             }
 
+            const runtime = call.request.runtime || 'node';
+            if (runtime !== 'node' && runtime !== 'python') {
+                return callback({
+                    code: grpc.status.INVALID_ARGUMENT,
+                    message: "runtime must be 'node' or 'python'",
+                });
+            }
+
             let parsedInput: Record<string, unknown> = {};
             if (input) {
                 try {
@@ -50,7 +58,7 @@ export class AgentServiceImpl {
                 }
             }
 
-            const task = await this.taskRepo.create(workflow_name, parsedInput);
+            const task = await this.taskRepo.create(workflow_name, parsedInput, runtime);
             callback(null, { task_id: task.id });
         } catch (err) {
             console.error(`${TAG} submitTask error:`, err);
@@ -237,6 +245,127 @@ export class AgentServiceImpl {
             callback(null, { success: true });
         } catch (err) {
             console.error(`${TAG} failStep error:`, err);
+            callback({ code: grpc.status.INTERNAL, message: String(err) });
+        }
+    }
+
+    async dequeueTask(call: ServerUnaryCall<any, any>, callback: sendUnaryData<any>) {
+        try {
+            const { runtime, batch_size, worker_id } = call.request;
+            if (runtime !== 'node' && runtime !== 'python') {
+                return callback({
+                    code: grpc.status.INVALID_ARGUMENT,
+                    message: "runtime must be 'node' or 'python'",
+                });
+            }
+            if (!worker_id || typeof worker_id !== 'string') {
+                return callback({
+                    code: grpc.status.INVALID_ARGUMENT,
+                    message: 'worker_id is required',
+                });
+            }
+            const size = Number(batch_size) > 0 ? Number(batch_size) : 10;
+            const tasks = await this.taskRepo.dequeue(size, worker_id, runtime);
+            callback(null, {
+                tasks: tasks.map((t) => ({
+                    task_id: t.id,
+                    workflow_name: t.workflow_name,
+                    input: Buffer.from(JSON.stringify(t.input ?? {})),
+                })),
+            });
+        } catch (err) {
+            console.error(`${TAG} dequeueTask error:`, err);
+            callback({ code: grpc.status.INTERNAL, message: String(err) });
+        }
+    }
+
+    async heartbeat(call: ServerUnaryCall<any, any>, callback: sendUnaryData<any>) {
+        try {
+            const { task_id } = call.request;
+            if (!task_id || typeof task_id !== 'string') {
+                return callback({
+                    code: grpc.status.INVALID_ARGUMENT,
+                    message: 'task_id is required',
+                });
+            }
+            const task = await this.taskRepo.findById(task_id);
+            if (!task) return callback({ code: grpc.status.NOT_FOUND, message: 'Task not found' });
+            await this.taskRepo.updateHeartbeat(task_id);
+            callback(null, { ok: true });
+        } catch (err) {
+            console.error(`${TAG} heartbeat error:`, err);
+            callback({ code: grpc.status.INTERNAL, message: String(err) });
+        }
+    }
+
+    async completeTask(call: ServerUnaryCall<any, any>, callback: sendUnaryData<any>) {
+        try {
+            const { task_id, output } = call.request;
+            if (!task_id || typeof task_id !== 'string') {
+                return callback({
+                    code: grpc.status.INVALID_ARGUMENT,
+                    message: 'task_id is required',
+                });
+            }
+            let parsed: unknown = null;
+            if (output && output.length > 0) {
+                try {
+                    parsed = JSON.parse(output.toString());
+                } catch {
+                    return callback({
+                        code: grpc.status.INVALID_ARGUMENT,
+                        message: 'output must be valid JSON',
+                    });
+                }
+            }
+            const task = await this.taskRepo.findById(task_id);
+            if (!task) return callback({ code: grpc.status.NOT_FOUND, message: 'Task not found' });
+            const ok = await this.taskRepo.completeRunning(task_id, parsed);
+            if (!ok) {
+                return callback({
+                    code: grpc.status.FAILED_PRECONDITION,
+                    message: `Task is not running (status: ${task.status})`,
+                });
+            }
+            callback(null, { success: true });
+        } catch (err) {
+            console.error(`${TAG} completeTask error:`, err);
+            callback({ code: grpc.status.INTERNAL, message: String(err) });
+        }
+    }
+
+    async failTask(call: ServerUnaryCall<any, any>, callback: sendUnaryData<any>) {
+        try {
+            const { task_id, error } = call.request;
+            if (!task_id || typeof task_id !== 'string') {
+                return callback({
+                    code: grpc.status.INVALID_ARGUMENT,
+                    message: 'task_id is required',
+                });
+            }
+            let parsed: unknown = { message: 'Unknown error' };
+            if (error && error.length > 0) {
+                try {
+                    parsed = JSON.parse(error.toString());
+                } catch {
+                    return callback({
+                        code: grpc.status.INVALID_ARGUMENT,
+                        message: 'error must be valid JSON',
+                    });
+                }
+            }
+            const task = await this.taskRepo.findById(task_id);
+            if (!task) return callback({ code: grpc.status.NOT_FOUND, message: 'Task not found' });
+            const ok = await this.taskRepo.failRunning(task_id, parsed);
+            if (!ok) {
+                return callback({
+                    code: grpc.status.FAILED_PRECONDITION,
+                    message: `Task is not running (status: ${task.status})`,
+                });
+            }
+            callback(null, { success: true });
+        } catch (err) {
+            console.error(`${TAG} failTask error:`, err);
             callback({ code: grpc.status.INTERNAL, message: String(err) });
         }
     }

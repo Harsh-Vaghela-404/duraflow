@@ -35,6 +35,10 @@ CREATE TABLE IF NOT EXISTS agent_tasks (
     deleted_at      TIMESTAMPTZ
 );
 
+-- runtime telcac: 'node' = internal TS executor, 'python' = external worker
+ALTER TABLE agent_tasks
+    ADD COLUMN IF NOT EXISTS runtime TEXT NOT NULL DEFAULT 'node';
+
 -- ============================================================
 -- step_runs — per-step execution records (memoization + saga)
 -- ============================================================

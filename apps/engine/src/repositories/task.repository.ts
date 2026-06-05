@@ -4,10 +4,14 @@ import { TaskEntity, taskStatus } from "../db/task.entity";
 export class TaskRepository {
   constructor(private readonly pool: Pool) {}
 
-  async create(name: string, input: Record<string, any>): Promise<TaskEntity> {
+  async create(
+    name: string,
+    input: Record<string, any>,
+    runtime: 'node' | 'python' = 'node',
+  ): Promise<TaskEntity> {
     const res = await this.pool.query(
-      "INSERT INTO agent_tasks (workflow_name, input) VALUES($1, $2) RETURNING *",
-      [name, input],
+      "INSERT INTO agent_tasks (workflow_name, input, runtime) VALUES($1, $2, $3) RETURNING *",
+      [name, input, runtime],
     );
     return res.rows[0];
   }
@@ -53,6 +57,24 @@ export class TaskRepository {
     );
   }
 
+  async completeRunning(id: string, output: unknown): Promise<boolean> {
+    const res = await this.pool.query(
+      `UPDATE agent_tasks SET status = $1, output = $2, completed_at = NOW()
+             WHERE id = $3 AND status = $4`,
+      [taskStatus.COMPLETED, output, id, taskStatus.RUNNING],
+    );
+    return (res.rowCount ?? 0) > 0;
+  }
+
+  async failRunning(id: string, error: unknown): Promise<boolean> {
+    const res = await this.pool.query(
+      `UPDATE agent_tasks SET status = $1, error = $2, completed_at = NOW()
+             WHERE id = $3 AND status = $4`,
+      [taskStatus.FAILED, error, id, taskStatus.RUNNING],
+    );
+    return (res.rowCount ?? 0) > 0;
+  }
+
   async findPendingTasks(limit: number): Promise<TaskEntity[]> {
     const res = await this.pool.query(
       "SELECT * FROM agent_tasks WHERE status = $1 ORDER BY priority DESC, created_at ASC LIMIT $2",
@@ -61,11 +83,16 @@ export class TaskRepository {
     return res.rows;
   }
 
-  async dequeue(batchSize: number, workerId: string): Promise<TaskEntity[]> {
+  async dequeue(
+    batchSize: number,
+    workerId: string,
+    runtime: 'node' | 'python' = 'node',
+  ): Promise<TaskEntity[]> {
     const res = await this.pool.query(
       `WITH next_jobs AS (
                 SELECT id FROM agent_tasks
-                WHERE status = $1 AND (scheduled_at <= NOW() OR scheduled_at IS NULL)
+                WHERE status = $1 AND runtime = $5
+                  AND (scheduled_at <= NOW() OR scheduled_at IS NULL)
                 ORDER BY priority DESC, created_at ASC
                 LIMIT $2
                 FOR UPDATE SKIP LOCKED
@@ -75,7 +102,7 @@ export class TaskRepository {
             FROM next_jobs
             WHERE agent_tasks.id = next_jobs.id
             RETURNING agent_tasks.*`,
-      [taskStatus.PENDING, batchSize, taskStatus.RUNNING, workerId],
+      [taskStatus.PENDING, batchSize, taskStatus.RUNNING, workerId, runtime],
     );
     return res.rows;
   }

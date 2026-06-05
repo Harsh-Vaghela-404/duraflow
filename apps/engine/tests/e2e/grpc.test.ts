@@ -159,4 +159,57 @@ describe("E2E gRPC", () => {
     const outputJson = JSON.parse(finalStatus.output.toString());
     expect(outputJson).toEqual({ result: { processed: { e2e: true } } });
   });
+
+  describe("external worker RPCs", () => {
+    it("submits a python task, dequeues it, heartbeats, and completes it", async () => {
+      const submit: any = await new Promise((resolve, reject) =>
+        client.submitTask(
+          { workflow_name: "py-wf", input: Buffer.from("{}"), runtime: "python" },
+          (e: any, r: any) => (e ? reject(e) : resolve(r)),
+        ),
+      );
+      const taskId = submit.task_id;
+
+      const dq: any = await new Promise((resolve, reject) =>
+        client.dequeueTask(
+          { runtime: "python", batch_size: 10, worker_id: "py-1" },
+          (e: any, r: any) => (e ? reject(e) : resolve(r)),
+        ),
+      );
+      expect(dq.tasks.map((t: any) => t.task_id)).toContain(taskId);
+
+      const hb: any = await new Promise((resolve, reject) =>
+        client.heartbeat({ task_id: taskId, worker_id: "py-1" }, (e: any, r: any) =>
+          e ? reject(e) : resolve(r),
+        ),
+      );
+      expect(hb.ok).toBe(true);
+
+      const done: any = await new Promise((resolve, reject) =>
+        client.completeTask(
+          { task_id: taskId, output: Buffer.from(JSON.stringify({ ok: 1 })) },
+          (e: any, r: any) => (e ? reject(e) : resolve(r)),
+        ),
+      );
+      expect(done.success).toBe(true);
+
+      const status: any = await new Promise((resolve, reject) =>
+        client.getTaskStatus({ task_id: taskId }, (e: any, r: any) =>
+          e ? reject(e) : resolve(r),
+        ),
+      );
+      expect(status.status).toBe("COMPLETED");
+    });
+
+    it("rejects an invalid runtime on submit", async () => {
+      await expect(
+        new Promise((resolve, reject) =>
+          client.submitTask(
+            { workflow_name: "x", input: Buffer.from("{}"), runtime: "ruby" },
+            (e: any, r: any) => (e ? reject(e) : resolve(r)),
+          ),
+        ),
+      ).rejects.toMatchObject({ code: grpc.status.INVALID_ARGUMENT });
+    });
+  });
 });

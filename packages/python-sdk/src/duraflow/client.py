@@ -81,12 +81,12 @@ class DuraflowClient:
             self._stub = None
 
     async def submit_task(
-        self, workflow_name: str, input: Optional[Any] = None
+        self, workflow_name: str, input: Optional[Any] = None, runtime: str = "python"
     ) -> TaskHandle:
         stub = self._require_stub()
         payload = json.dumps(input if input is not None else {}).encode()
         request = service_pb2.SubmitTaskRequest(  # type: ignore[attr-defined]
-            workflow_name=workflow_name, input=payload
+            workflow_name=workflow_name, input=payload, runtime=runtime
         )
         response = await stub.SubmitTask(request)
         return TaskHandle(task_id=response.task_id, client=self)

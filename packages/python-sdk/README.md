@@ -147,10 +147,10 @@ result = await worker.execute_task(
 await worker.stop()
 ```
 
-> **Note:** The engine does not yet expose a task-dequeue RPC. Until it does, the
-> worker's polling loop needs a `dequeue` callable supplied at construction
-> (`Worker(dequeue=...)`); `execute_task` works fully against the existing
-> `GetStep`/`CompleteStep`/`FailStep` RPCs.
+> The worker polls the engine via `DequeueTask` for `runtime='python'` tasks,
+> heartbeats them during execution, and reports results via `CompleteTask`/`FailTask`.
+> Submit Python tasks with `client.submit_task(name, input)` (defaults to
+> `runtime='python'`).
 
 ## Error Handling
 

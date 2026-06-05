@@ -11,6 +11,7 @@ export enum taskStatus {
 export interface TaskEntity {
     id: string;
     workflow_name: string;
+    runtime: 'node' | 'python';
     status: taskStatus;
     input: Record<string, any>;
     output: Record<string, any> | null;

@@ -63,7 +63,7 @@ export class Poller {
         }
 
         try {
-            const tasks = await this.taskRepo.dequeue(this.batchSize, this.workerId);
+            const tasks = await this.taskRepo.dequeue(this.batchSize, this.workerId, 'node');
 
             if (tasks.length > 0) {
                 this.interval = this.minInterval;
