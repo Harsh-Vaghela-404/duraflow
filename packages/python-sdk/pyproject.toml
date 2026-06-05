@@ -48,3 +48,11 @@ python_version = "3.9"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
+exclude = ['src/duraflow/_generated/', 'src/duraflow/_scripts/', 'scripts/']
+
+# Generated gRPC code and proto stubs are not type-checked — they build their
+# message attributes dynamically and ship without py.typed markers.
+[[tool.mypy.overrides]]
+module = ["duraflow._generated.*", "duraflow._scripts.*", "grpc_tools.*", "google.protobuf.*"]
+ignore_errors = true
+ignore_missing_imports = true
