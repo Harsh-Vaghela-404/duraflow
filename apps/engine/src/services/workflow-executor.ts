@@ -170,8 +170,12 @@ export class WorkflowExecutor {
           return { id: request.id, success: true, data: step };
         }
         case 'STEP_COMPLETE': {
-          const { stepId, output } = request.payload as { stepId: string; output: unknown };
-          await this.stepRepo.updateCompleted(stepId, output);
+          const { stepId, output, compensationFn } = request.payload as {
+            stepId: string;
+            output: unknown;
+            compensationFn: string | null;
+          };
+          await this.stepRepo.updateCompleted(stepId, output, compensationFn ?? undefined);
           return { id: request.id, success: true };
         }
         case 'STEP_FAIL': {

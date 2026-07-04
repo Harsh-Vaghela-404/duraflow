@@ -11,8 +11,8 @@
 | `apps/engine/src/grpc/health.service.ts` | `pg`, `ioredis` | `grpc/server` |
 | `apps/engine/src/services/poller.ts` | `repositories/task.repository`, `db/task.entity` | `index.ts` |
 | `apps/engine/src/services/heartbeat.service.ts` | `repositories/task.repository` | `index.ts`, `task-runner.ts` |
-| `apps/engine/src/services/reaper.ts` | `pg`, `ioredis`, `db/task.entity`, `services/leaderelector` | `index.ts` |
-| `apps/engine/src/services/leaderelector.ts` | `ioredis` | `services/reaper` |
+| `apps/engine/src/services/reaper.ts` | `pg`, `ioredis`, `db/task.entity`, `services/leader-elector` | `index.ts` |
+| `apps/engine/src/services/leader-elector.ts` | `ioredis` | `services/reaper` |
 | `apps/engine/src/services/rollback-orchestrator.ts` | `pg`, `@duraflow/sdk` (`compensationRegistry`), `repositories/{step,task,dlq}.repository`, `db/task.entity` | `services/workflow-executor` (indirect, see Gotchas) |
 | `apps/engine/src/services/workflow-executor.ts` | `pg`, `piscina`, `worker_threads`, `repositories/{step,task}.repository`, `db/task.entity` | `index.ts`, `task-runner.ts` |
 | `apps/engine/src/services/event-loop-monitor.ts` | — (`perf_hooks`) | `index.ts` |
@@ -22,15 +22,15 @@
 | `apps/engine/src/repositories/dlq.repository.ts` | `pg`, `db/dead_letter_queue.entity` | `services/rollback-orchestrator` |
 | `apps/engine/src/db/index.ts` | `pg`, `ioredis`, `dotenv/config` | `index.ts`, all repositories indirectly |
 | `apps/engine/src/db/migrate.ts` | `pg` | run manually via `tsx`; not part of the engine process |
-| `apps/engine/src/workers/workflow.worker.ts` | `worker_threads`, `crypto`, `path`, `@duraflow/sdk`, `errors/step-retry.error`, `utils/backoff` | Piscina (loaded by `createPiscinaPool` filename arg) |
+| `apps/engine/src/workers/step-worker.ts` | `worker_threads`, `crypto`, `path`, `@duraflow/sdk`, `errors/step-retry.error`, `utils/backoff` | Piscina (loaded by `createPiscinaPool` filename arg) |
 | `apps/engine/src/workflows/booking-saga.ts` | `@duraflow/sdk` only | loaded at worker boot via `DURAFLOW_WORKFLOWS` |
 | `apps/engine/src/workflows.ts` | re-exports workflows | loaded at worker boot via `DURAFLOW_WORKFLOWS` |
-| `apps/engine/src/errors/step-retry.error.ts` | — | `workers/workflow.worker` |
-| `apps/engine/src/utils/backoff.ts` | — | `workers/workflow.worker` |
+| `apps/engine/src/errors/step-retry.error.ts` | — | `workers/step-worker` |
+| `apps/engine/src/utils/backoff.ts` | — | `workers/step-worker` |
 | `packages/sdk/src/workflow.ts` | `./types` | `packages/sdk/src/index.ts` |
-| `packages/sdk/src/compensation.ts` | — | `packages/sdk/src/index.ts`, `services/rollback-orchestrator`, `workers/workflow.worker`, integration tests |
-| `packages/sdk/src/utils/serialization.ts` | `superjson` | `packages/sdk/src/index.ts`, `workers/workflow.worker` |
-| `packages/sdk/src/types.ts` | — | `workflow.ts`, `workers/workflow.worker` |
+| `packages/sdk/src/compensation.ts` | — | `packages/sdk/src/index.ts`, `services/rollback-orchestrator`, `workers/step-worker`, integration tests |
+| `packages/sdk/src/utils/serialization.ts` | `superjson` | `packages/sdk/src/index.ts`, `workers/step-worker` |
+| `packages/sdk/src/types.ts` | — | `workflow.ts`, `workers/step-worker` |
 
 **Boundary rule (enforced by convention):** `packages/sdk` MUST NEVER import from `apps/engine`. Files under `apps/engine/src/workflows/` MUST import only from `@duraflow/sdk`, never from engine internals.
 
@@ -54,7 +54,7 @@
 | External Service | Client File | Used By | Failure Impact |
 |-----------------|-------------|---------|----------------|
 | PostgreSQL | `apps/engine/src/db/index.ts:8-15` (`createPool`) | every service and repository | Total halt — gRPC handlers return `INTERNAL`; poller backs off; reaper skips. Tasks remain in their current state. |
-| Redis | `apps/engine/src/db/index.ts:17-21` (`createRedis`) | `services/leaderelector.ts` (and via `Reaper`) | Reaper does not run this tick. No effect on gRPC or task execution. On next leader cycle, stale tasks are picked up. |
+| Redis | `apps/engine/src/db/index.ts:17-21` (`createRedis`) | `services/leader-elector.ts` (and via `Reaper`) | Reaper does not run this tick. No effect on gRPC or task execution. On next leader cycle, stale tasks are picked up. |
 | Piscina worker pool | `apps/engine/src/services/workflow-executor.ts:32-49` | `services/workflow-executor.ts` (main thread) | If `pool.run` rejects: task is failed and (if compensations exist) rolled back. IPC timeout (30s) per step request from worker. |
 | Qdrant | not wired | — | N/A (provisioned in docker-compose, no client lib installed) |
 
@@ -64,10 +64,10 @@ There is no message bus or queue beyond Postgres itself. The only IPC channels a
 
 | Channel | Producer | Consumer | Payload |
 |---------|----------|----------|---------|
-| Piscina `pool.run({ taskId, workflowName, input, port })` | `WorkflowExecutor.execute` (main) | `workflow.worker.ts` module exports | `WorkerTask` interface |
+| Piscina `pool.run({ taskId, workflowName, input, port })` | `WorkflowExecutor.execute` (main) | `step-worker.ts` module exports | `WorkerTask` interface |
 | `MessagePort` request (`port1.on('message')`) | `IPCClient.send` (worker) | `WorkflowExecutor.handleWorkerMessage` (main) | `IPCRequest` ({ id, type: `STEP_FIND` \| `STEP_CREATE_OR_FIND` \| `STEP_COMPLETE` \| `STEP_FAIL` \| `STEP_INCREMENT`, payload }) |
 | `MessagePort` response (`port.on('message')`) | `WorkflowExecutor.handleWorkerMessage` (main) | `IPCClient.handleResponse` (worker) | `IPCResponse` ({ id, success, data?, error? }) |
-| Worker thrown `{ __stepRetry, delay, attempt, originalError }` | `workflow.worker.ts` (after `StepRetryError`) | `WorkflowExecutor.execute` catch block | structured-cloned object, NOT an `Error` instance |
+| Worker thrown `{ __stepRetry, delay, attempt, originalError }` | `step-worker.ts` (after `StepRetryError`) | `WorkflowExecutor.execute` catch block | structured-cloned object, NOT an `Error` instance |
 | `taskRepo.scheduleRetry` write | `WorkflowExecutor.execute` | next `Poller.poll` cycle (via `agent_tasks.status = 'pending'` + `scheduled_at`) | — |
 | `dead_letter_queue` INSERT | `RollbackOrchestrator.rollback` | operator manual `dlqRepo.retry(id)` | — |
 
@@ -75,7 +75,7 @@ There is no message bus or queue beyond Postgres itself. The only IPC channels a
 
 | Shared Module | Used By | Notes |
 |--------------|---------|-------|
-| `@duraflow/sdk` (workspace) | `apps/engine/src/workers/workflow.worker.ts`, `apps/engine/src/services/rollback-orchestrator.ts`, `apps/engine/src/workflows/booking-saga.ts`, integration tests | Workflow author surface. Engine internals access `compensationRegistry`. |
+| `@duraflow/sdk` (workspace) | `apps/engine/src/workers/step-worker.ts`, `apps/engine/src/services/rollback-orchestrator.ts`, `apps/engine/src/workflows/booking-saga.ts`, integration tests | Workflow author surface. Engine internals access `compensationRegistry`. |
 | `@duraflow/proto` (workspace) | not yet imported by engine — proto files loaded by `@grpc/proto-loader` at runtime | `packages/proto/generated/*.ts` exist but the engine still does `protoLoader.loadSync` against raw `.proto`. |
 | `apps/engine/tests/helpers/db.ts` | every integration and e2e test | `createTestPool`, `createTestRedis`, `closePool`, `clearTables`, `createTask` |
 | `apps/engine/tests/helpers/poll.ts` | e2e tests, some integration tests | helpers for polling task status until terminal |
@@ -94,5 +94,5 @@ Migration is `apps/engine/src/db/migrate.ts`. Every JSONB or column change must 
 ### Modifying `compensationRegistry`
 Process-local Map. Tests must register compensations they reference (`registerCompensation('booking-saga:book-flight', fn)`). Renaming a registry key is a breaking change for everyone using that workflow.
 
-### Modifying `workflow.worker.ts` IPC
+### Modifying `step-worker.ts` IPC
 Both the main thread (`WorkflowExecutor.handleWorkerMessage`) and the worker (`IPCClient`) must change in lockstep. `IPCMessageType` is duplicated in both files — TypeScript will not catch a divergence.

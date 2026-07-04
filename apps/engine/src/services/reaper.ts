@@ -39,26 +39,42 @@ export class Reaper {
             return;
         }
 
-        const isLeader = await this.leaderElector.tryBecomeLeader();
-        if (!isLeader) {
-            console.log(`${TAG} another instance is leader, skipping`);
-            return;
-        }
-
         this.running = true;
-        console.log(`${TAG} started as leader (interval: ${this.intervalMs}ms, stale threshold: ${this.staleThresholdSeconds}s)`);
+        console.log(`${TAG} started (interval: ${this.intervalMs}ms, stale threshold: ${this.staleThresholdSeconds}s)`);
 
-        // Recursive setTimeout so each tick waits for the previous reap to finish —
-        // gives natural backpressure when a reap cycle runs long under DB pressure.
+        // Every instance runs the loop; only the current leader actually reaps.
+        // A non-leader re-attempts election on each tick, so when the leader dies
+        // and its Redis lease expires, a follower promotes itself — this is what
+        // makes failover work (previously election was attempted only once at
+        // startup, so a dead leader was never replaced).
+        // Recursive setTimeout so each tick waits for the previous reap to finish.
         void this.runReapLoop();
     }
 
     private async runReapLoop(): Promise<void> {
         if (!this.running) return;
-        await this.reap();
+        try {
+            if (await this.ensureLeadership()) {
+                await this.reap();
+            }
+        } catch (err) {
+            console.error(`${TAG} reap loop error:`, err);
+        }
         if (this.running) {
             this.timeoutHandle = setTimeout(() => { void this.runReapLoop(); }, this.intervalMs);
         }
+    }
+
+    // Returns true if this instance holds leadership after the check. If it is
+    // not currently the leader, it attempts to acquire the lease (succeeds only
+    // once the previous leader's lease has expired).
+    private async ensureLeadership(): Promise<boolean> {
+        if (await this.leaderElector.isLeader()) return true;
+        const promoted = await this.leaderElector.tryBecomeLeader();
+        if (promoted) {
+            console.log(`${TAG} promoted to leader`);
+        }
+        return promoted;
     }
 
     async stop(): Promise<void> {

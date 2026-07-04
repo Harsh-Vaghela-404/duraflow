@@ -3,7 +3,7 @@ import { Pool } from 'pg';
 import Redis from 'ioredis';
 import { TaskEntity, taskStatus } from '../../src/db/task.entity';
 
-export const TEST_DB_URL = process.env.DATABASE_URL || 'postgresql://duraflow:duraflow@localhost:5432/duraflow';
+export const TEST_DB_URL = process.env.DATABASE_URL || 'postgresql://duraflow:duraflow@localhost:5433/duraflow';
 export const TEST_REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 
 export function createTestPool(): Pool {

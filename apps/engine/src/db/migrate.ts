@@ -7,7 +7,7 @@ const TAG = "[migrate]";
 const pool = new Pool({
   connectionString:
     process.env.DATABASE_URL ||
-    "postgresql://duraflow:duraflow@localhost:5432/duraflow",
+    "postgresql://duraflow:duraflow@localhost:5433/duraflow",
 });
 
 async function migrate() {

@@ -257,10 +257,10 @@ The `steps` array is already ordered for LIFO — `findCompletedWithCompensation
 
 ## SDK Workflow Definition
 
-User workflows live in `apps/engine/src/workflows/` and import only from `@duraflow/sdk` — never from engine internals. Each `step.run(name, fn, { compensation })` registers a step. The compensation key sent to the registry is `${workflowName}:${stepKey}`.
+User workflows import only from `@duraflow/sdk` — never from engine internals. Each `step.run(name, fn, opts)` declares a step. Compensations are declared **separately**, in the `compensations` map on `workflow(name, handler, { compensations })`, keyed by step key — they must be **pure functions of the step's saved output** (a compensation may be run by a different process than the one that executed the step). The registry key is `${workflowName}:${stepKey}`.
 
 ```typescript
-// Source: apps/engine/src/workflows/booking-saga.ts (excerpt)
+// Source: apps/engine/tests/workflows/booking-saga.ts (excerpt)
 import { workflow } from "@duraflow/sdk";
 
 export const bookingWorkflow = workflow(
@@ -269,20 +269,22 @@ export const bookingWorkflow = workflow(
     const inp = input as BookingInput;
 
     const flight = await step.run("book-flight", async () => {
-      const bookingId = `FLIGHT-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const bookingId = `FLIGHT-${Date.now()}`;
       mockBookings.flights.set(inp.customerId, { bookingId, cancelled: false });
       return { bookingId, ...inp.flightDetails };
-    }, {
-      compensation: async (output) => {
-        const booking = mockBookings.flights.get(inp.customerId);
-        if (booking && !booking.cancelled) {
-          booking.cancelled = true;
-          cancellationOrder.push("flight");
-        }
-      },
     });
-    // ... more steps
-    return { flightBookingId: flight.bookingId, /* ... */ };
+    // ... more steps, then a failing charge-payment
+    return { flightBookingId: flight.bookingId /* ... */ };
+  },
+  {
+    // Pure functions of each step's saved output. Registered at module load
+    // under `booking-saga:<stepKey>`, resolvable in the main (rollback) thread.
+    compensations: {
+      "book-flight": async (output) => {
+        cancelByBookingId(mockBookings.flights, (output as { bookingId: string }).bookingId);
+      },
+      // "book-hotel": ..., "book-car": ...
+    },
   },
 );
 ```
@@ -323,7 +325,7 @@ async execute(task: TaskEntity): Promise<unknown> {
 ```
 
 ```typescript
-// Source: apps/engine/src/workers/workflow.worker.ts:65-122 (worker thread IPCClient)
+// Source: apps/engine/src/workers/step-worker.ts:65-122 (worker thread IPCClient)
 class IPCClient {
   private pending = new Map<string, { resolve, reject, timeout: NodeJS.Timeout }>();
   constructor(private port: MessagePort) {
@@ -349,7 +351,7 @@ class IPCClient {
 The worker throws `StepRetryError` from inside `step.run` when `attempt <= retries`. The worker then re-throws it as a plain object with `__stepRetry: true` so it survives Piscina's structured-clone boundary. The `WorkflowExecutor` detects this object and calls `taskRepo.scheduleRetry` instead of `fail`.
 
 ```typescript
-// Source: apps/engine/src/workers/workflow.worker.ts:155-172
+// Source: apps/engine/src/workers/step-worker.ts:155-172
 if (currentAttempt <= maxRetries) {
   const delay = calculateBackOff(currentAttempt);
   await ipc.send('STEP_INCREMENT', { stepId: step.id });
@@ -359,7 +361,7 @@ if (currentAttempt <= maxRetries) {
 ```
 
 ```typescript
-// Source: apps/engine/src/workers/workflow.worker.ts:196-208 (the marshalling)
+// Source: apps/engine/src/workers/step-worker.ts:196-208 (the marshalling)
 if (err instanceof StepRetryError) {
   const original = err.originalError instanceof Error
     ? { message: err.originalError.message, name: err.originalError.name }
@@ -373,7 +375,7 @@ if (err instanceof StepRetryError) {
 Atomic `SET key value EX ttl NX` for acquisition; a Lua script that checks the stored value before `EXPIRE` for renewal so a second process can't overwrite a held lease.
 
 ```typescript
-// Source: apps/engine/src/services/leaderelector.ts (excerpt)
+// Source: apps/engine/src/services/leader-elector.ts (excerpt)
 const LEADER_KEY = 'duraflow:reaper:leader';
 
 async tryBecomeLeader(): Promise<boolean> {

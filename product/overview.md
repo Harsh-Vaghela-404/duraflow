@@ -46,18 +46,21 @@ export const researchAgent = workflow("research-agent", async ({ step, input }) 
 
   await step.run("save", async () => {
     return await db.insert(summary);
-  }, {
-    compensation: async (saved) => {
-      // If anything fails after this point, this undo runs automatically.
-      await db.delete(saved.id);
-    },
   });
 
   return summary;
+}, {
+  // Compensations are pure functions of a step's saved output. If a later step
+  // fails, completed steps are undone automatically in LIFO order.
+  compensations: {
+    save: async (saved) => {
+      await db.delete(saved.id);
+    },
+  },
 });
 ```
 
-That's the whole API. Wrap each unit of work in `step.run`. Optionally provide a `compensation` for steps that need to be undone.
+That's the whole API. Wrap each unit of work in `step.run`. Declare a `compensation` per step key for steps that must be undone when a later step fails.
 
 ## What It Gives You
 
@@ -85,7 +88,7 @@ Client ──gRPC──> Duraflow Engine ──Piscina workers──> Your Workf
 - **Piscina** worker thread pool runs the actual workflow code so the gRPC server stays responsive.
 - **Redis** is only for distributed leader election — not generic caching.
 - **superjson** preserves `Date` / `Map` / `Set` / `Error` through serialization (1 MB hard cap per payload).
-- **TypeScript SDK** is the developer surface (`@duraflow/sdk`). Python SDK is on the roadmap.
+- **TypeScript SDK** is the primary developer surface (`@duraflow/sdk`). A **Python SDK** ships too (`packages/python-sdk`), running as an external worker over gRPC.
 
 ## Who Duraflow Is For
 
@@ -104,7 +107,7 @@ Client ──gRPC──> Duraflow Engine ──Piscina workers──> Your Workf
 
 **Phase 1 (the engine) is shipped.** Durable workflows, sagas, dead-letter queue, reaper, leader election, worker threads, backpressure — all live in code with three-tier tests. Public documentation is published at [duraflow-docs.vercel.app](https://duraflow-docs.vercel.app).
 
-**Phase 2 (SDK ecosystem)** is next: Python SDK, LangChain & CrewAI adapters, REST + CLI.
+**Phase 2 (SDK ecosystem)** is in progress: the Python SDK and rate limiting are shipped; LangChain & CrewAI adapters, REST, and CLI are next.
 
 **Phase 3 (dashboard + cost + human-in-loop)** follows.
 

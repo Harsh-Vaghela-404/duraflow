@@ -50,7 +50,7 @@ describe("E2E gRPC", () => {
         ),
         DATABASE_URL:
           process.env.DATABASE_URL ||
-          "postgresql://duraflow:duraflow@localhost:5432/duraflow",
+          "postgresql://duraflow:duraflow@localhost:5433/duraflow",
       },
       stdio: "pipe",
       shell: true,

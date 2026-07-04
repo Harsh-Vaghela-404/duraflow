@@ -7,13 +7,9 @@ class CompensationRegistry {
     private fns = new Map<string, CompensationFn>();
 
     register(name: string, fn: CompensationFn): void {
-        if (this.fns.has(name)) {
-            // Overwriting is intentional — hot reload or duplicate registration
-            // during tests should be idempotent.
-            this.fns.set(name, fn);
-        } else {
-            this.fns.set(name, fn);
-        }
+        // Overwriting is intentional — hot reload or duplicate registration
+        // (e.g. across a test's beforeEach) should be idempotent.
+        this.fns.set(name, fn);
     }
 
     get(name: string): CompensationFn | undefined {

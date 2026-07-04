@@ -41,10 +41,10 @@
 
 ### gRPC Service Layer (`apps/engine/src/grpc/`)
 
-- **`agent.service.ts`** — `AgentServiceImpl` — three RPCs: `submitTask`, `getTaskStatus`, `cancelTask`. TAG = `[grpc]`.
+- **`agent.service.ts`** — `AgentServiceImpl` — twelve RPCs: `submitTask`, `getTaskStatus`, `cancelTask`, `getStep`, `completeStep`, `failStep`, `dequeueTask`, `heartbeat`, `completeTask`, `failTask`, `getRateLimitStatus`, `resetRateLimit`. TAG = `[agent-service]`.
 - **`health.service.ts`** — `HealthService` — `check` + `watch` for `grpc.health.v1.Health`.
 
-The proto declares six RPCs (`SubmitTask`, `GetTaskStatus`, `CancelTask`, `GetStep`, `CompleteStep`, `FailStep`) but only the first three are wired in `server.ts:50-54`. The Step RPCs are reserved for SDK crash recovery and not yet implemented.
+All twelve AgentService RPCs are wired in `server.ts`. **Two execution models share this surface:** the *internal Node runtime* (poller → Piscina worker) drives `submitTask`/`getTaskStatus`/`cancelTask` plus the step RPCs; the *external-worker runtime* (e.g. the Python SDK) pulls work via `dequeueTask`/`heartbeat`/`completeTask`/`failTask`. The `runtime` column on `agent_tasks` (`'node'` | `'python'`) routes each task. Note: the external path does whole-task execution only — no step memoization or saga semantics through the engine yet.
 
 ### Services (`apps/engine/src/services/`)
 
@@ -53,7 +53,7 @@ The proto declares six RPCs (`SubmitTask`, `GetTaskStatus`, `CancelTask`, `GetSt
 | `poller.ts` | `Poller` | `[poller]` | Claims tasks via `taskRepo.dequeue` with exponential backoff (100→200→400→500ms cap). Respects `checkBackpressure()` callback. |
 | `heartbeat.service.ts` | `HeartbeatService` | `[heartbeat]` | `setInterval` per task updating `agent_tasks.heartbeat_at`. Default 5s. |
 | `reaper.ts` | `Reaper` | `[reaper]` | Re-queues stale `running` tasks (heartbeat older than 300s) or fails them if `retry_count >= max_retries`. Singleton via `LeaderElector`. |
-| `leaderelector.ts` | `LeaderElector` | `[leader]` | Redis `SET key val EX NX` + Lua `EXPIRE` for check-and-renew. Key: `duraflow:reaper:leader`. TTL: `LEADER_TTL_SECONDS` (default 30). |
+| `leader-elector.ts` | `LeaderElector` | `[leader]` | Redis `SET key val EX NX` + Lua `EXPIRE` for check-and-renew. Key: `duraflow:reaper:leader`. TTL: `LEADER_TTL_SECONDS` (default 30). |
 | `rollback-orchestrator.ts` | `RollbackOrchestrator` | `[rollback]` | LIFO compensation over completed steps. Per-compensation 30s timeout. Failed compensations → DLQ. |
 | `workflow-executor.ts` | `WorkflowExecutor` + `createPiscinaPool` | `[executor]` | Dispatches task to Piscina worker via `MessageChannel`. Owns IPC reply handler (`STEP_FIND`, `STEP_CREATE_OR_FIND`, `STEP_COMPLETE`, `STEP_FAIL`, `STEP_INCREMENT`). Translates `__stepRetry` → `taskRepo.scheduleRetry`. |
 | `event-loop-monitor.ts` | `EventLoopMonitor` | n/a | Tracks event-loop lag (ms) used by `checkBackpressure` in `index.ts:69-86`. |
@@ -63,17 +63,17 @@ The proto declares six RPCs (`SubmitTask`, `GetTaskStatus`, `CancelTask`, `GetSt
 
 | File | Class | Table | Notes |
 |------|-------|-------|-------|
-| `task.repository.ts` | `TaskRepository` | `agent_tasks` | `create`, `findById`, `updateStatus`, `updateCompleted`, `fail`, `updateHeartbeat`, `findPendingTasks`, `dequeue`, `scheduleRetry`. `dequeue` uses `FOR UPDATE SKIP LOCKED` inside a CTE. |
+| `task.repository.ts` | `TaskRepository` | `agent_tasks` | `create`, `findById`, `updateStatus`, `updateCompleted`, `fail`, `updateHeartbeat`, `completeRunning`, `failRunning`, `dequeue`, `scheduleRetry`. `dequeue` uses `FOR UPDATE SKIP LOCKED` inside a CTE. |
 | `step.repository.ts` | `StepRepository` | `step_runs` | `findByTaskAndKey`, `createOrFind`, `updateCompleted`, `updateFailed`, `incrementAttempt`, `findCompletedWithCompensation`, `markCompensated`. |
 | `dlq.repository.ts` | `DeadLetterQueueRepository` | `dead_letter_queue` | `insert(taskId, stepId, errorContext)`. Manual retry surface is `dlqRepo.retry(id)` (operator-driven). |
 
 ### Workers (`apps/engine/src/workers/`)
 
-- **`workflow.worker.ts`** — Piscina worker entry. CommonJS via `module.exports = executeWorkflow`. TAG = `[worker]`. Contains an in-file `IPCClient` class (UUID-keyed `pending` map, 30s timeout per request, `timeout.unref()`). Builds `StepRunner` and calls the registered workflow handler. Translates `StepRetryError` thrown from `step.run` into `{ __stepRetry, delay, attempt, originalError }` for the main thread to detect. Loads user workflows from `process.env.DURAFLOW_WORKFLOWS` (comma-separated paths) on module load.
+- **`step-worker.ts`** — Piscina worker entry. CommonJS via `module.exports = executeWorkflow`. TAG = `[worker]`. Contains an in-file `IPCClient` class (UUID-keyed `pending` map, 30s timeout per request, `timeout.unref()`). Builds `StepRunner` and calls the registered workflow handler. Translates `StepRetryError` thrown from `step.run` into `{ __stepRetry, delay, attempt, originalError }` for the main thread to detect. Loads user workflows from `process.env.DURAFLOW_WORKFLOWS` (comma-separated paths) on module load.
 
 ### Workflows (`apps/engine/src/workflows/`)
 
-- **`booking-saga.ts`** — Example three-step saga: `book-flight` → `book-hotel` → `book-car` → `charge-payment` (always throws). Demonstrates compensation registration through `step.run`'s `compensation` option. The compensation key passed to the registry is `${workflowName}:${stepKey}` (e.g., `booking-saga:book-flight`) — see `workflow.worker.ts:142-145`.
+- **`booking-saga.ts`** — Example three-step saga: `book-flight` → `book-hotel` → `book-car` → `charge-payment` (always throws). Demonstrates compensation registration through `step.run`'s `compensation` option. The compensation key passed to the registry is `${workflowName}:${stepKey}` (e.g., `booking-saga:book-flight`) — see `step-worker.ts:142-145`.
 - **`apps/engine/src/workflows.ts`** — Workflow re-export module loaded by `DURAFLOW_WORKFLOWS`.
 
 ### Data Layer (`apps/engine/src/db/`)
@@ -96,7 +96,7 @@ The proto declares six RPCs (`SubmitTask`, `GetTaskStatus`, `CancelTask`, `GetSt
 
 ### Errors & Utilities
 
-- **`apps/engine/src/errors/step-retry.error.ts`** — `StepRetryError(delay, attempt, originalError)`. Thrown inside `createStepRunner.run` when `currentAttempt <= maxRetries` (`workflow.worker.ts:162`).
+- **`apps/engine/src/errors/step-retry.error.ts`** — `StepRetryError(delay, attempt, originalError)`. Thrown inside `createStepRunner.run` when `currentAttempt <= maxRetries` (`step-worker.ts:162`).
 - **`apps/engine/src/utils/backoff.ts`** — `calculateBackOff(attempt)` exponential backoff helper.
 - **`apps/engine/src/constants/lock_ids.ts`** — Shared constant identifiers.
 
@@ -197,8 +197,8 @@ If auth is added in the future, it should be a single gRPC interceptor reading f
 | `REAPER_INTERVAL` | `10000` (ms) | `index.ts:22` | Reaper tick interval |
 | `MAX_QUEUE_SIZE` | `1000` | `index.ts:23` | Piscina backpressure threshold |
 | `MAX_EVENT_LOOP_LAG` | `100` (ms) | `index.ts:24` | Event-loop backpressure threshold |
-| `LEADER_TTL_SECONDS` | `30` | `leaderelector.ts:15` | Redis lease TTL for reaper leader |
-| `DURAFLOW_WORKFLOWS` | — | `workflow.worker.ts:20`, `index.ts:46` | Comma-separated list of workflow files to `require()` at worker startup |
+| `LEADER_TTL_SECONDS` | `30` | `leader-elector.ts:15` | Redis lease TTL for reaper leader |
+| `DURAFLOW_WORKFLOWS` | — | `step-worker.ts:20`, `index.ts:46` | Comma-separated list of workflow files to `require()` at worker startup |
 
 ## Verification Commands (from `package.json`)
 

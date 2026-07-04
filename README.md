@@ -19,7 +19,7 @@
   <img src="https://img.shields.io/badge/TypeScript-5.9-3178C6.svg?logo=typescript&logoColor=white" alt="TypeScript">
 </p>
 
-> **Status:** Phase 1 (the engine) is shipped and tested. Phase 2 (SDK ecosystem: Python, LangChain/CrewAI adapters, CLI, rate limiting) is next. See [product/status.md](product/status.md) for the honest line-item state.
+> **Status:** Phase 1 (the engine) is shipped and tested. Phase 2 (SDK ecosystem) is in progress — the Python SDK and rate limiting are done; LangChain/CrewAI adapters, REST, and CLI are next. See [product/status.md](product/status.md) for the honest line-item state.
 
 ---
 
@@ -51,18 +51,21 @@ export const researchAgent = workflow("research-agent", async ({ step, input }) 
 
   await step.run("save", async () => {
     return await db.insert(summary);
-  }, {
-    compensation: async (saved) => {
-      // If a later step fails, this undo runs automatically.
-      await db.delete(saved.id);
-    },
   });
 
   return summary;
+}, {
+  // Compensations are pure functions of a step's saved output. If a later step
+  // fails, completed steps are undone automatically in LIFO order (saga rollback).
+  compensations: {
+    save: async (saved) => {
+      await db.delete(saved.id);
+    },
+  },
 });
 ```
 
-That's the whole API. Wrap each unit of work in `step.run`. Optionally provide a `compensation` for steps that need to be undone.
+That's the whole API. Wrap each unit of work in `step.run`. Declare a `compensation` per step key for steps that must be undone when a later step fails.
 
 ---
 
@@ -82,7 +85,7 @@ npm install
 docker compose up -d postgres redis
 
 # 4. Configure .env in apps/engine (see apps/engine/.env.example if present)
-# DATABASE_URL=postgresql://duraflow:duraflow@localhost:5432/duraflow
+# DATABASE_URL=postgresql://duraflow:duraflow@localhost:5433/duraflow
 # REDIS_URL=redis://localhost:6379
 
 # 5. Run migrations
@@ -117,17 +120,17 @@ grpcurl -plaintext localhost:50051 grpc.health.v1.Health/Check
 - ✅ **Exponential-backoff retry** with `StepRetryError`
 - ✅ **superjson serialization** — `Date`, `Map`, `Set`, `Error` round-trip cleanly (1 MB cap per payload)
 - ✅ **TypeScript SDK** (`@duraflow/sdk`): `workflow`, `step.run`, retries, compensation, serialize
-- ✅ **Three-tier test suite**: 7 unit, 4 integration, 1 e2e — all green
+- ✅ **Three-tier test suite**: 16 suites (unit / integration / e2e), 72 tests — all green
 - ✅ **Public documentation site** at [duraflow-docs.vercel.app](https://duraflow-docs.vercel.app)
 
-### Phase 2 — SDK Ecosystem [NEXT, not started]
+### Phase 2 — SDK Ecosystem [IN PROGRESS]
 
-- 🔜 Python SDK (`pip install duraflow`)
+- ✅ **Python SDK** — `@workflow` decorator, `StepRunner`, standalone worker over the external-worker gRPC RPCs (`packages/python-sdk`)
+- ✅ **Rate limiting** — Redis token bucket with per-API presets (OpenAI / Anthropic), integrated into `step.run`
 - 🔜 LangChain adapter (`duraflow.wrap(chain)`)
 - 🔜 CrewAI adapter (`duraflow.wrap(crew)`)
 - 🔜 REST API wrapper + webhooks + scheduled triggers
 - 🔜 CLI (`duraflow init` / `dev` / `deploy` / `runs` / `logs`)
-- 🔜 Rate limiting (Redis token bucket; per-API limits for OpenAI / Anthropic)
 
 ### Phase 3 — Dashboard, Cost, Human-in-Loop [LATER]
 

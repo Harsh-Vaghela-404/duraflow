@@ -42,6 +42,7 @@ const myWorkflow = workflow<MyInput, MyOutput>("my-workflow", async (ctx) => {
 |-----------|------|-------------|
 | `name` | `string` | Unique workflow name (alphanumeric, dashes, underscores, max 100 chars) |
 | `handler` | `(ctx: WorkflowContext) => Promise<TOutput>` | Async function that executes the workflow |
+| `options` | `WorkflowOptions?` | Optional — `{ compensations }` map keyed by step key (see [WorkflowOptions](#workflowoptions)) |
 
 **Returns:** `Workflow<TOutput>`
 
@@ -58,12 +59,12 @@ const result = await ctx.step.run<string>(
   {
     retries: 3,
     timeout: 30000,
-    compensation: async (output) => {
-      // undo logic
-    },
   },
 );
 ```
+
+> Compensations are **not** a step option. They are declared on the workflow via
+> the `compensations` map (see [`WorkflowOptions`](#workflowoptions)).
 
 **Parameters:**
 | Parameter | Type | Description |
@@ -116,8 +117,19 @@ interface StepOptions<T = unknown> {
   // Timeout in milliseconds (default: no timeout)
   timeout?: number;
 
-  // Compensation function for saga rollback
-  compensation?: (output: T) => Promise<void>;
+  // Optional rate-limit gate for this step
+  rateLimit?: RateLimitOptions;
+}
+```
+
+### WorkflowOptions
+
+```typescript
+interface WorkflowOptions {
+  // Compensations keyed by step key. Each is a PURE function of that step's
+  // SAVED output (no closure over handler state). Registered at module load so
+  // a rollback in any process can resolve them; run in LIFO order on failure.
+  compensations?: Record<string, (output: unknown) => Promise<void>>;
 }
 ```
 
@@ -171,7 +183,7 @@ console.log("Registered:", names);
 
 ### `registerCompensation(name, fn)`
 
-Manually register a compensation function (useful in worker threads).
+Low-level API to register a compensation by its full `${workflowName}:${stepKey}` key. Most code should use the `compensations` map on `workflow(...)` instead — it registers for you. Use this directly only if you need a stable, hand-managed key.
 
 ```typescript
 import { registerCompensation } from "@duraflow/sdk";

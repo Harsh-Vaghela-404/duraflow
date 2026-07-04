@@ -75,14 +75,6 @@ export class TaskRepository {
     return (res.rowCount ?? 0) > 0;
   }
 
-  async findPendingTasks(limit: number): Promise<TaskEntity[]> {
-    const res = await this.pool.query(
-      "SELECT * FROM agent_tasks WHERE status = $1 ORDER BY priority DESC, created_at ASC LIMIT $2",
-      [taskStatus.PENDING, limit],
-    );
-    return res.rows;
-  }
-
   async dequeue(
     batchSize: number,
     workerId: string,

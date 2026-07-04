@@ -15,45 +15,44 @@ Use the saga pattern when your workflow performs **multiple side effects** that 
 
 ## Quick Example
 
+Compensations are declared in a `compensations` map on the workflow, keyed by step key. Each one is a **pure function of that step's saved output** — see [Compensation Function](#compensation-function) for why.
+
 ```typescript
 import { workflow } from "@duraflow/sdk";
 
-const bookingWorkflow = workflow("booking", async (ctx) => {
-  // Step 1: Book flight with compensation
-  const flight = await ctx.step.run(
-    "book-flight",
-    async () => {
+const bookingWorkflow = workflow(
+  "booking",
+  async (ctx) => {
+    const flight = await ctx.step.run("book-flight", async () => {
       return await api.bookFlight(ctx.input.flightDetails);
-    },
-    {
-      compensation: async (output) => {
+    });
+
+    const hotel = await ctx.step.run("book-hotel", async () => {
+      return await api.bookHotel(ctx.input.hotelDetails);
+    });
+
+    // If this step fails, both flight and hotel are automatically cancelled.
+    const payment = await ctx.step.run("charge-payment", async () => {
+      const result = await api.charge(ctx.input.payment);
+      if (!result.success) throw new Error("Payment failed");
+      return result;
+    });
+
+    return { flight, hotel, payment };
+  },
+  {
+    // Keyed by step key. Run in LIFO order over completed steps on failure.
+    compensations: {
+      "book-flight": async (output) => {
         await api.cancelFlight(output.flightId);
       },
-    },
-  );
-
-  // Step 2: Book hotel with compensation
-  const hotel = await ctx.step.run(
-    "book-hotel",
-    async () => {
-      return await api.bookHotel(ctx.input.hotelDetails);
-    },
-    {
-      compensation: async (output) => {
+      "book-hotel": async (output) => {
         await api.cancelHotel(output.hotelId);
       },
+      // charge-payment has no compensation — nothing to undo.
     },
-  );
-
-  // If this step fails, both flight and hotel are automatically cancelled
-  const payment = await ctx.step.run("charge-payment", async () => {
-    const result = await api.charge(ctx.input.payment);
-    if (!result.success) throw new Error("Payment failed");
-    return result;
-  });
-
-  return { flight, hotel, payment };
-});
+  },
+);
 ```
 
 ## How Rollback Works
@@ -75,13 +74,18 @@ This reverse order matters because later steps often depend on earlier ones.
 
 ## Compensation Function
 
-A compensation function receives the step's output and undoes its effects:
+A compensation receives the step's **saved output** (read back from the database) and undoes its effects. It **must be a pure function of that output** — it may not close over variables from the workflow handler.
+
+Why: a rollback can run in a different process (or after a crash) than the one that executed the step. Only what the step *returned and persisted* is guaranteed to be available. Compensations are registered by step key at module load, so the engine can resolve and run them anywhere.
 
 ```typescript
-compensation: async (output: BookingOutput) => {
-  // output contains whatever the step returned
-  await api.cancelFlight(output.bookingId);
-};
+// Declared in the workflow's `compensations` map, keyed by step key:
+compensations: {
+  "book-flight": async (output: BookingOutput) => {
+    // `output` is exactly what the step returned.
+    await api.cancelFlight(output.bookingId);
+  },
+}
 ```
 
 ## Full Example: Travel Booking
@@ -127,13 +131,7 @@ async function cancelCar(output: any) {
   });
 }
 
-// Register compensations (for use in worker threads)
-import { registerCompensation } from "@duraflow/sdk";
-registerCompensation("booking:book-flight", cancelFlight);
-registerCompensation("booking:book-hotel", cancelHotel);
-registerCompensation("booking:book-car", cancelCar);
-
-// Workflow definition
+// Workflow definition — compensations are attached in the options below.
 export const bookingSaga = workflow<BookingInput, BookingOutput>(
   "booking",
   async (ctx) => {
@@ -149,9 +147,6 @@ export const bookingSaga = workflow<BookingInput, BookingOutput>(
         });
         return { flightId: res.id, price: res.price };
       },
-      {
-        compensation: cancelFlight,
-      },
     );
 
     // Step 2: Book hotel
@@ -164,9 +159,6 @@ export const bookingSaga = workflow<BookingInput, BookingOutput>(
         });
         return { hotelId: res.id, price: res.price };
       },
-      {
-        compensation: cancelHotel,
-      },
     );
 
     // Step 3: Book car
@@ -178,9 +170,6 @@ export const bookingSaga = workflow<BookingInput, BookingOutput>(
           body: JSON.stringify({ destination, dates }),
         });
         return { carId: res.id, price: res.price };
-      },
-      {
-        compensation: cancelCar,
       },
     );
 
@@ -209,6 +198,13 @@ export const bookingSaga = workflow<BookingInput, BookingOutput>(
       },
       total,
     };
+  },
+  {
+    compensations: {
+      "book-flight": cancelFlight,
+      "book-hotel": cancelHotel,
+      "book-car": cancelCar,
+    },
   },
 );
 ```
@@ -260,25 +256,25 @@ async function cancelHotel(output) {
 Return everything the compensation will need:
 
 ```typescript
-await ctx.step.run(
-  "create-vm",
-  async () => {
-    const vm = await cloud.createInstance({ size: "large" });
-    return {
-      instanceId: vm.id,
-      ip: vm.ip,
-      region: vm.region,
-      securityGroup: vm.securityGroup,
-      createdAt: new Date().toISOString(),
-    };
+// The step returns everything its compensation will need:
+await ctx.step.run("create-vm", async () => {
+  const vm = await cloud.createInstance({ size: "large" });
+  return {
+    instanceId: vm.id,
+    ip: vm.ip,
+    region: vm.region,
+    securityGroup: vm.securityGroup,
+    createdAt: new Date().toISOString(),
+  };
+});
+
+// ...and the compensation (in the workflow's `compensations` map) reads it back:
+compensations: {
+  "create-vm": async (output) => {
+    await cloud.terminate(output.instanceId);
+    await cloud.deleteSecurityGroup(output.securityGroup);
   },
-  {
-    compensation: async (output) => {
-      await cloud.terminate(output.instanceId);
-      await cloud.deleteSecurityGroup(output.securityGroup);
-    },
-  },
-);
+}
 ```
 
 ### 4. Log Compensation Actions
@@ -286,11 +282,12 @@ await ctx.step.run(
 Compensations run during failures when debugging is hardest:
 
 ```typescript
-compensation: async (output) => {
+// entry in the workflow's `compensations` map:
+"book-flight": async (output) => {
   console.log(`[saga] Cancelling flight ${output.flightId}`);
   const res = await api.cancelFlight(output.flightId);
   console.log(`[saga] Flight cancelled: ${res.ok}`);
-};
+},
 ```
 
 ### 5. Not Every Step Needs Compensation
@@ -298,23 +295,23 @@ compensation: async (output) => {
 Purely computational steps don't need compensations:
 
 ```typescript
-// No compensation - just parsing data
+// No entry in the compensations map — just parsing data:
 const data = await ctx.step.run("parse-csv", async () => {
   return parseCSV(rawInput);
 });
 
-// Compensation needed - external API call
-const created = await ctx.step.run(
-  "create-user",
-  async () => {
-    return await api.createUser(data);
+// Creates an external resource, so it gets a compensation:
+const created = await ctx.step.run("create-user", async () => {
+  return await api.createUser(data);
+});
+
+// In the workflow's `compensations` map:
+compensations: {
+  "create-user": async (output) => {
+    await api.deleteUser(output.id);
   },
-  {
-    compensation: async (output) => {
-      await api.deleteUser(output.id);
-    },
-  },
-);
+  // (no "parse-csv" key — nothing to undo)
+}
 ```
 
 ## Dead Letter Queue (DLQ)

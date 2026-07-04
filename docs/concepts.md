@@ -28,7 +28,7 @@ A **step** is a single unit of work within a workflow. Steps are executed sequen
 - Has a unique name within the workflow
 - Can return data (output) that persists to database
 - Can be retried on failure
-- Can have compensation for rollback
+- Can have a compensation (declared on the workflow) for rollback
 
 ```typescript
 const result = await ctx.step.run(
@@ -39,11 +39,9 @@ const result = await ctx.step.run(
   {
     retries: 3, // Retry 3 times on failure
     timeout: 30000, // 30 second timeout
-    compensation: async (output) => {
-      // Undo the step's effects
-    },
   },
 );
+// Compensations are declared separately, on the workflow — see Saga Pattern below.
 ```
 
 ## Crash Recovery (Memoization)
@@ -165,14 +163,20 @@ When a workflow fails, Duraflow can automatically undo completed steps:
 4. Continue with remaining compensations
 
 ```typescript
-await ctx.step.run(
-  "book-flight",
-  async () => {
-    return await api.bookFlight(details);
+const bookingWorkflow = workflow(
+  "booking",
+  async (ctx) => {
+    const flight = await ctx.step.run("book-flight", async () => {
+      return await api.bookFlight(details);
+    });
+    // ...more steps
   },
   {
-    compensation: async (output) => {
-      await api.cancelFlight(output.flightId);
+    // Keyed by step key; a pure function of the step's saved output.
+    compensations: {
+      "book-flight": async (output) => {
+        await api.cancelFlight(output.flightId);
+      },
     },
   },
 );

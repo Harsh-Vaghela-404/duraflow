@@ -1,5 +1,5 @@
 import { Pool } from "pg";
-import { compensationRegistry } from "@duraflow/sdk";
+import { compensationRegistry, deserialize } from "@duraflow/sdk";
 import { StepRepository } from "../repositories/step.repository";
 import { TaskRepository } from "../repositories/task.repository";
 import { DeadLetterQueueRepository } from "../repositories/dlq.repository";
@@ -84,7 +84,12 @@ export class RollbackOrchestrator {
       }
 
       try {
-        await this.executeWithTimeout(fn, step.output, timeoutMs);
+        // step.output is stored as the superjson envelope the worker persisted
+        // (JSON.parse(serialize(result))). Reconstruct the original value so the
+        // compensation receives the same output the step returned.
+        const output =
+          step.output == null ? undefined : deserialize(JSON.stringify(step.output));
+        await this.executeWithTimeout(fn, output, timeoutMs);
         await this.stepRepo.markCompensated(step.id);
         compensated++;
         console.log(`${TAG} step ${step.id} (${step.step_key}) — compensated`);

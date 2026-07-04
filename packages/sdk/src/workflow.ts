@@ -1,4 +1,5 @@
-import { WorkflowContext } from './types';
+import { WorkflowContext, WorkflowOptions } from './types';
+import { compensationRegistry } from './compensation';
 
 export type WorkflowHandler = (ctx: WorkflowContext) => Promise<unknown>;
 
@@ -41,6 +42,20 @@ class Registry {
 
 export const globalRegistry = new Registry();
 
-export function workflow(name: string, handler: WorkflowHandler): Workflow {
-    return globalRegistry.register(name, handler);
+export function workflow(
+    name: string,
+    handler: WorkflowHandler,
+    options?: WorkflowOptions,
+): Workflow {
+    const wf = globalRegistry.register(name, handler);
+
+    // Register compensations at module load under a deterministic key so a
+    // rollback in any process can resolve them by name (see Compensation docs).
+    if (options?.compensations) {
+        for (const [stepKey, fn] of Object.entries(options.compensations)) {
+            compensationRegistry.register(`${name}:${stepKey}`, fn);
+        }
+    }
+
+    return wf;
 }

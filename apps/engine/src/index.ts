@@ -13,6 +13,7 @@ import {
 } from './services';
 import { v7 as uuid } from 'uuid';
 import { runTask } from './task-runner';
+import { loadWorkflows } from './utils/load-workflows';
 
 const TAG = '[duraflow]';
 
@@ -52,6 +53,11 @@ async function main() {
             `${TAG} WARNING: DURAFLOW_WORKFLOWS is not set. Worker threads will not load any workflows.`,
         );
     }
+
+    // Load workflows in the main thread too — not to execute them, but so the
+    // compensationRegistry is populated here. Rollback runs in the main thread
+    // and must resolve each step's compensation by name (see B1b).
+    loadWorkflows();
 
     // Health checks
     await pool.query('SELECT 1');

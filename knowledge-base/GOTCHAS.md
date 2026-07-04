@@ -33,26 +33,19 @@ Handler signature is `(call, callback) => void`. The body wraps everything in `t
 
 ---
 
-### Compensation registry is process-local
+### Compensations must be PURE functions of a step's saved output
 
-`compensationRegistry` is a `Map` in module scope. Workflows register their compensations when the workflow file is `require()`-ed at worker startup (`apps/engine/src/workers/workflow.worker.ts:24-35`). Integration tests must explicitly call `registerCompensation('${workflowName}:${stepKey}', fn)` in `beforeEach` (`apps/engine/tests/integration/saga.test.ts:77-79`). If the registry key is missing, the orchestrator routes that step to `dead_letter_queue` and continues — the compensation simply does not run.
+A compensation may use **only the step's persisted `output`** (read back from the DB) — never live closure state from the handler. It is declared via `workflow(name, handler, { compensations })` and registered by string name `${workflowName}:${stepKey}` in `compensationRegistry` at **module load**, so it resolves in *any* process that loads the workflow — including the engine main thread, where rollback runs.
 
-**Affected Files:**
-- `packages/sdk/src/compensation.ts`
-- `apps/engine/src/workers/workflow.worker.ts:141-145` (key construction)
-- `apps/engine/src/services/rollback-orchestrator.ts:65-84`
-- `apps/engine/tests/integration/saga.test.ts:77-79`
+**Why the discipline exists (historical bug, fixed 2026-07-04):** compensations used to be inline closures on `step.run({ compensation })`, registered inside the Piscina *worker* thread. But rollback runs in the *main* thread — a different module instance with an empty registry — and a closure can't cross a thread boundary. Combined with the worker dropping `compensation_fn` on the IPC path (so it was never persisted), real-runtime rollback compensated **zero** steps, while the isolation tests (which registered by hand in-process and set `compensation_fn` directly) stayed green. Fixed by: persisting `compensation_fn`, loading workflows in the main thread, and requiring pure-of-output compensations. Proven by `tests/integration/saga-execution.test.ts`.
 
----
-
-### Compensation registry key is `${workflowName}:${stepKey}`, NOT just `stepKey`
-
-The worker registers compensations using `${workflowName}:${stepKey}` as the key (`workflow.worker.ts:143`). The orchestrator looks them up by the same key (read out of `step_runs.compensation_fn`, which the worker also wrote with the prefixed key — see `workflow.worker.ts:148-153`). If you `registerCompensation('book-flight', fn)` in a test, the lookup at rollback time will fail.
+**Registry key is `${workflowName}:${stepKey}`, not just `stepKey`** — the same string is written to `step_runs.compensation_fn` and read back at rollback time. Registering `'book-flight'` alone fails the lookup.
 
 **Affected Files:**
-- `apps/engine/src/workers/workflow.worker.ts:141-153`
-- `apps/engine/src/services/rollback-orchestrator.ts:64`
-- `apps/engine/tests/integration/saga.test.ts:77-79` (correctly uses the prefixed key)
+- `packages/sdk/src/workflow.ts` (registers `options.compensations` at load), `packages/sdk/src/compensation.ts`
+- `apps/engine/src/utils/load-workflows.ts` (loaded by both the worker and `index.ts`)
+- `apps/engine/src/workers/step-worker.ts`, `apps/engine/src/services/workflow-executor.ts`
+- `apps/engine/src/services/rollback-orchestrator.ts` (deserializes `output` before invoking)
 
 ---
 
@@ -81,7 +74,7 @@ The worker registers compensations using `${workflowName}:${stepKey}` as the key
 There is no generic caching. Adding `redisClient.get / set` for any other purpose requires justification — the codebase is intentionally cache-light. If you find yourself reaching for Redis to "cache something," check whether a missing index would solve it instead.
 
 **Affected Files:**
-- `apps/engine/src/services/leaderelector.ts` (the only consumer)
+- `apps/engine/src/services/leader-elector.ts` (the only consumer)
 - `apps/engine/src/db/index.ts:17-21` (factory)
 
 ---
@@ -91,7 +84,7 @@ There is no generic caching. Adding `redisClient.get / set` for any other purpos
 The worker thread has no pg `Pool`. It IPCs back to the main thread via `MessagePort` for every DB operation (`STEP_FIND`, `STEP_CREATE_OR_FIND`, `STEP_COMPLETE`, `STEP_FAIL`, `STEP_INCREMENT`). Adding `new Pool()` inside the worker creates an unmanaged pool that no shutdown handler closes.
 
 **Affected Files:**
-- `apps/engine/src/workers/workflow.worker.ts:65-122` (`IPCClient`)
+- `apps/engine/src/workers/step-worker.ts:65-122` (`IPCClient`)
 - `apps/engine/src/services/workflow-executor.ts:110-147` (`handleWorkerMessage`)
 
 ---
@@ -101,7 +94,7 @@ The worker thread has no pg `Pool`. It IPCs back to the main thread via `Message
 Piscina structured-clones the rejection reason, which destroys the `StepRetryError` class identity. The worker translates `StepRetryError` into `{ __stepRetry: true, delay, attempt, originalError: { message, name } }` so the main thread can detect it via `isStepRetry(err)` checking the magic key (`workflow-executor.ts:106-108`). Changing the field name on either side without updating the other breaks all retries silently.
 
 **Affected Files:**
-- `apps/engine/src/workers/workflow.worker.ts:196-208` (worker-side marshalling)
+- `apps/engine/src/workers/step-worker.ts:196-208` (worker-side marshalling)
 - `apps/engine/src/services/workflow-executor.ts:82-86,106-108` (main-side detection)
 
 ---
@@ -122,10 +115,10 @@ Piscina structured-clones the rejection reason, which destroys the `StepRetryErr
 
 - **Plain `setInterval` in a poll loop** — Use recursive `setTimeout` like `Poller.poll` so each tick waits for the previous one to finish. The exception is `HeartbeatService` and `Reaper`, where intervals are intentionally fixed and short.
 - **CPU work on the main thread** — The gRPC server, poller, executor IPC handler, and event-loop monitor all share one event loop. Heavy work belongs in a Piscina step. If `monitor.lag >= MAX_EVENT_LOOP_LAG`, the poller pauses — debug the CPU sink, do not raise the threshold.
-- **`SELECT *` on hot paths** — `findPendingTasks` and `findById` return everything, which is fine for now. If you add a hot path that only needs a few columns (e.g., a count or status check), narrow the SELECT.
+- **`SELECT *` on hot paths** — `dequeue` and `findById` return everything, which is fine for now. If you add a hot path that only needs a few columns (e.g., a count or status check), narrow the SELECT.
 - **N+1 step fetches in rollback** — `RollbackOrchestrator.rollback` reads all compensatable steps in one query (`findCompletedWithCompensation`). Adding per-step lookups inside the loop would re-introduce N+1.
 - **Unbounded admin batches** — Any future DLQ replay / retention purge must chunk with `LIMIT $1 OFFSET $2`. The example in `rules/reliability.md` is canonical.
-- **Forgetting `timeout.unref()` on long-lived pending timers** — `IPCClient.send` already calls `timeout.unref()` (`workflow.worker.ts:103`). Without it, the worker process can't exit cleanly.
+- **Forgetting `timeout.unref()` on long-lived pending timers** — `IPCClient.send` already calls `timeout.unref()` (`step-worker.ts:103`). Without it, the worker process can't exit cleanly.
 
 ## Naming Confusion
 
@@ -136,7 +129,7 @@ Piscina structured-clones the rejection reason, which destroys the `StepRetryErr
 | `workerId` | At startup: `worker-${uuid().slice(0,8)}` for the engine instance. Also stored in `agent_tasks.worker_id` when a task is dequeued. | DB column is `worker_id`. Reaper compares against this to recover stale tasks. | `apps/engine/src/index.ts:25`, `apps/engine/src/repositories/task.repository.ts:64-81` |
 | `compensation_fn` | DB column on `step_runs` — stores the compensation **key** (string), not a function reference | The same string is used as the key into the process-local `compensationRegistry` Map | `apps/engine/src/db/step_runs.entity.ts:21`, `packages/sdk/src/compensation.ts` |
 | `partial_rollback` vs `rolled_back` | `partial_rollback` = at least one compensation went to DLQ. `rolled_back` = all compensations succeeded. NEVER reuse `failed` for rollback outcomes. | DB values match exactly | `apps/engine/src/db/task.entity.ts:7-8`, `apps/engine/src/services/rollback-orchestrator.ts:118-119` |
-| `step.run` | SDK method on `StepRunner` — memoizes by `(task_id, step_key)` and (optionally) registers a compensation | The DB row in `step_runs` is the persisted side of one `step.run` call | `packages/sdk/src/types.ts`, `apps/engine/src/workers/workflow.worker.ts:124-173` |
+| `step.run` | SDK method on `StepRunner` — memoizes by `(task_id, step_key)` and (optionally) registers a compensation | The DB row in `step_runs` is the persisted side of one `step.run` call | `packages/sdk/src/types.ts`, `apps/engine/src/workers/step-worker.ts:124-173` |
 
 ## Tech Debt & Known Issues
 
@@ -157,9 +150,9 @@ Previously resolved:
 
 - **`taskStatus` enum uses `camelCase` enum name + lowercase string values** — Unusual but consistent across the project (`taskStatus.PENDING = 'pending'`). The lowercase values are what's stored in Postgres; the camelCase enum name is the TS handle. Do NOT switch to PascalCase mid-feature. See `apps/engine/src/db/task.entity.ts`.
 - **Recursive `setTimeout` instead of `setInterval` in `Poller.poll`** — Each tick must wait for the previous one to finish. `setInterval` would fire concurrent ticks if the dequeue ever takes longer than the interval, which would let two ticks both try to claim work. See `apps/engine/src/services/poller.ts:54-88`.
-- **Worker re-throws `StepRetryError` as a plain object with `__stepRetry: true`** — Piscina structured-clones the rejection across the worker boundary, which destroys `Error` subclass identity. The plain object survives the boundary intact; the main thread checks the magic key. See `apps/engine/src/workers/workflow.worker.ts:196-208`.
+- **Worker re-throws `StepRetryError` as a plain object with `__stepRetry: true`** — Piscina structured-clones the rejection across the worker boundary, which destroys `Error` subclass identity. The plain object survives the boundary intact; the main thread checks the magic key. See `apps/engine/src/workers/step-worker.ts:196-208`.
 - **`RollbackOrchestrator` uses an inline `executeWithTimeout` helper instead of `Promise.race`** — The helper resolves the timeout cleanly and clears the timer in both branches. `Promise.race` leaks the timer when the function resolves first. See `apps/engine/src/services/rollback-orchestrator.ts:134-154`.
-- **`LeaderElector.releaseLeadership` uses a Lua script even though `del` is simple** — The script ensures only the current leader can delete the key. Without it, a process that lost leadership could still delete a newer leader's key during shutdown. See `apps/engine/src/services/leaderelector.ts:28-40`.
+- **`LeaderElector.releaseLeadership` uses a Lua script even though `del` is simple** — The script ensures only the current leader can delete the key. Without it, a process that lost leadership could still delete a newer leader's key during shutdown. See `apps/engine/src/services/leader-elector.ts:28-40`.
 - **All wiring lives in one `apps/engine/src/index.ts`** — No IoC container, no module decorators. The intent is to keep dependency direction visible at one site. Resist introducing `@Injectable` or a DI library.
 - **The handler returns `task.status.toUpperCase()`** — The proto uses `SCREAMING_SNAKE_CASE` enum values; the DB stores lowercase. The handler does the conversion on the way out. See `apps/engine/src/grpc/agent.service.ts:44`.
 

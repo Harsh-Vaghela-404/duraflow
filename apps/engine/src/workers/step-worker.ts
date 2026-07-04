@@ -1,5 +1,4 @@
 import { MessagePort } from 'worker_threads';
-import path from 'path';
 import {
   globalRegistry,
   compensationRegistry,
@@ -10,6 +9,7 @@ import {
   deserialize,
 } from '@duraflow/sdk';
 import { calculateBackOff } from '../utils/backoff';
+import { loadWorkflows } from '../utils/load-workflows';
 import { StepRetryError } from '../errors/step-retry.error';
 import { RateLimitTimeoutError } from '../errors/rate-limit-timeout.error';
 import { IPCClient } from './ipc-client';
@@ -19,24 +19,8 @@ const RATE_LIMIT_DEFAULT_TIMEOUT_MS = 60_000;
 
 const TAG = '[step-worker]';
 
-// Load user workflows
-const workflowPaths = process.env.DURAFLOW_WORKFLOWS?.split(',').filter(Boolean) || [];
-if (workflowPaths.length === 0) {
-  console.log(`${TAG} No DURAFLOW_WORKFLOWS set, running without user workflows`);
-} else {
-  for (const p of workflowPaths) {
-    try {
-      const trimmed = p.trim();
-      // Resolve path relative to process.cwd() not the worker file location
-      const resolved = path.isAbsolute(trimmed) ? trimmed : path.resolve(process.cwd(), trimmed);
-      // eslint-disable-next-line
-      require(resolved);
-      console.log(`${TAG} Loaded workflows from: ${resolved}`);
-    } catch (err) {
-      console.error(`${TAG} Failed to load workflow: ${p}`, err);
-    }
-  }
-}
+// Load user workflows into this worker thread (registers handlers + compensations).
+loadWorkflows();
 
 interface WorkerTask {
   taskId: string;
@@ -85,18 +69,19 @@ function createStepRunner(taskId: string, workflowName: string, ipc: IPCClient):
         }
       }
 
-      let compensationKey: string | undefined;
-      if (opts?.compensation) {
-        compensationKey = `${workflowName}:${name}`;
-        compensationRegistry.register(compensationKey, opts.compensation as (output: unknown) => Promise<void>);
-      }
+      // Compensations are registered at workflow module load under
+      // `${workflowName}:${stepKey}`. If one exists for this step, record its
+      // name on the step so the (main-thread) RollbackOrchestrator can resolve
+      // and run it later.
+      const compensationKey = `${workflowName}:${name}`;
+      const hasCompensation = compensationRegistry.has(compensationKey);
 
       try {
         const result = await fn();
         await ipc.send('STEP_COMPLETE', {
           stepId: step.id,
           output: JSON.parse(serialize(result)),
-          compensationFn: compensationKey ?? null,
+          compensationFn: hasCompensation ? compensationKey : null,
         });
         return result;
       } catch (err) {

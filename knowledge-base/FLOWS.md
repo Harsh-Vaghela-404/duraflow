@@ -47,7 +47,7 @@ A client invokes `AgentService.SubmitTask({ workflow_name, input })` over gRPC.
 3. **Hand off to runner** (`apps/engine/src/services/poller.ts:72-74`) — fires `onTaskReceived(task)` per task without awaiting (`Promise.catch` for errors). Wired in `index.ts:93` to call `runTask`.
 4. **Start heartbeat** (`apps/engine/src/task-runner.ts:13`) — `HeartbeatService.start(taskId)` sets a `setInterval` that updates `agent_tasks.heartbeat_at` every 5s.
 5. **Dispatch to worker** (`apps/engine/src/services/workflow-executor.ts:62-95`) — creates a `MessageChannel`, attaches a message listener on `port1` (the IPC reply handler), and calls `piscina.pool.run({ taskId, workflowName, input, port: port2 }, { transferList: [port2] })`.
-6. **Worker execution** (`apps/engine/src/workers/workflow.worker.ts:175-212`) — `executeWorkflow`:
+6. **Worker execution** (`apps/engine/src/workers/step-worker.ts:175-212`) — `executeWorkflow`:
    a. Looks up the workflow in `globalRegistry` by name. If not found, throws.
    b. Builds a `StepRunner` whose `run(name, fn, opts)` IPCs back to the main thread for each step (`STEP_FIND` → `STEP_CREATE_OR_FIND` → execute `fn` → `STEP_COMPLETE`). Caches: if `STEP_FIND` returns `{ status: 'completed' }`, returns the cached `output` without re-executing.
    c. Registers any `compensation` under the key `${workflowName}:${stepKey}` in `compensationRegistry`.
@@ -74,7 +74,7 @@ A client invokes `AgentService.SubmitTask({ workflow_name, input })` over gRPC.
 | `apps/engine/src/task-runner.ts` | Orchestrates heartbeat + executor |
 | `apps/engine/src/services/heartbeat.service.ts` | Per-task setInterval |
 | `apps/engine/src/services/workflow-executor.ts` | Piscina dispatch + IPC reply handler |
-| `apps/engine/src/workers/workflow.worker.ts` | Worker entry, `IPCClient`, `StepRunner`, `executeWorkflow` |
+| `apps/engine/src/workers/step-worker.ts` | Worker entry, `IPCClient`, `StepRunner`, `executeWorkflow` |
 
 ### Related Flows
 - Failure path → **Flow 3 (retry)** or **Flow 4 (saga rollback)**.
@@ -88,8 +88,8 @@ A client invokes `AgentService.SubmitTask({ workflow_name, input })` over gRPC.
 A step throws inside `step.run(name, fn, { retries: N })` and `currentAttempt <= N`.
 
 ### Steps
-1. **StepRunner catches the throw** (`apps/engine/src/workers/workflow.worker.ts:155-163`) — increments the step's `attempt` via IPC (`STEP_INCREMENT`), computes `delay = calculateBackOff(currentAttempt)`, and throws `StepRetryError(delay, currentAttempt + 1, err)`.
-2. **Worker re-throws as plain object** (`workflow.worker.ts:196-208`) — Piscina cannot structured-clone an `Error` subclass cleanly, so the worker translates `StepRetryError` into `{ __stepRetry: true, delay, attempt, originalError: { message, name } }`.
+1. **StepRunner catches the throw** (`apps/engine/src/workers/step-worker.ts:155-163`) — increments the step's `attempt` via IPC (`STEP_INCREMENT`), computes `delay = calculateBackOff(currentAttempt)`, and throws `StepRetryError(delay, currentAttempt + 1, err)`.
+2. **Worker re-throws as plain object** (`step-worker.ts:196-208`) — Piscina cannot structured-clone an `Error` subclass cleanly, so the worker translates `StepRetryError` into `{ __stepRetry: true, delay, attempt, originalError: { message, name } }`.
 3. **Main thread detects retry** (`apps/engine/src/services/workflow-executor.ts:82-86`) — `isStepRetry(err)` checks for `__stepRetry`. If true, calls `taskRepo.scheduleRetry(task.id, err.delay, err.attempt, err.originalError)`.
 4. **Schedule retry in DB** (`apps/engine/src/repositories/task.repository.ts:83-105`) — sets `status='pending'`, `scheduled_at = NOW() + ($delay || ' milliseconds')::INTERVAL`, `retry_count = $attempt`, persists `error` JSONB, clears `worker_id` and `heartbeat_at`.
 5. **Next Poller tick** — when `scheduled_at <= NOW()`, the task is dequeued again (Flow 2 from step 2).
@@ -103,7 +103,7 @@ A step throws inside `step.run(name, fn, { retries: N })` and `currentAttempt <=
 ### Files Involved
 | File | Role |
 |------|------|
-| `apps/engine/src/workers/workflow.worker.ts` | `StepRunner.run` retry branch + StepRetryError marshalling |
+| `apps/engine/src/workers/step-worker.ts` | `StepRunner.run` retry branch + StepRetryError marshalling |
 | `apps/engine/src/errors/step-retry.error.ts` | Error class with `delay`, `attempt`, `originalError` |
 | `apps/engine/src/utils/backoff.ts` | `calculateBackOff(attempt)` exponential backoff |
 | `apps/engine/src/services/workflow-executor.ts` | Main-thread detection + schedule call |
@@ -156,7 +156,7 @@ A task transitions to `failed` (or is `cancelled`) AND has one or more `step_run
 2. **Concurrency guard** (`reaper.ts:71-72`) — `if (this.isReaping) return [];` — never overlap two reap cycles on the same instance.
 3. **Re-queue stale running tasks** (`reaper.ts:92-104`) — `UPDATE agent_tasks SET status='pending', worker_id=NULL, retry_count = retry_count + 1 WHERE status='running' AND heartbeat_at < NOW() - INTERVAL '$3 seconds' AND retry_count < max_retries RETURNING id, workflow_name, retry_count`.
 4. **Fail exhausted tasks** (`reaper.ts:106-121`) — `UPDATE agent_tasks SET status='failed', error=jsonb_build_object('message', 'Task exceeded max retries after worker failure', 'code', 'MAX_RETRIES_EXCEEDED') WHERE status='running' AND heartbeat_at < NOW() - INTERVAL '$3 seconds' AND retry_count >= max_retries RETURNING id, ...`.
-5. **Lease renewal** (`leaderelector.ts:47-60`) — runs every `LEADER_TTL_SECONDS / 2` seconds via a Lua script that `EXPIRE`s the lease only if the value still matches this worker's id. If renewal fails, log `[leader] lost leadership` and stop renewing.
+5. **Lease renewal** (`leader-elector.ts:47-60`) — runs every `LEADER_TTL_SECONDS / 2` seconds via a Lua script that `EXPIRE`s the lease only if the value still matches this worker's id. If renewal fails, log `[leader] lost leadership` and stop renewing.
 
 ### Data Flow
 - **Persisted:** `agent_tasks.status` flips `running → pending` (re-queue) or `running → failed` (exhausted).
@@ -169,7 +169,7 @@ A task transitions to `failed` (or is `cancelled`) AND has one or more `step_run
 | File | Role |
 |------|------|
 | `apps/engine/src/services/reaper.ts` | Reap loop + SQL |
-| `apps/engine/src/services/leaderelector.ts` | SET NX EX + Lua EXPIRE renew |
+| `apps/engine/src/services/leader-elector.ts` | SET NX EX + Lua EXPIRE renew |
 
 ### Related Flows
 - Re-queued tasks become candidates for **Flow 2** again.

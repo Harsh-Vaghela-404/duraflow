@@ -1,131 +1,102 @@
 # Status
 
-> The honest state of the Duraflow build. Updated 2026-05-17.
+> The honest state of the Duraflow build. Updated 2026-07-04.
 
-We try hard not to lie about state. Every claim in this file maps to a file or directory in the repo. If you find a discrepancy, it's a bug — open an issue.
+Every claim here maps to a file or directory in the repo. If you find a discrepancy, it's a bug — fix it in the same commit.
 
 ## TL;DR
 
-- **Phase 1 — the engine** is **shipped**. Durable execution, sagas, dead-letter queue, reaper, leader election, worker threads, backpressure — all built and tested.
-- **Public documentation** is **shipped** at [duraflow-docs.vercel.app](https://duraflow-docs.vercel.app).
-- **Phase 2 — SDK ecosystem** is **next**. Python SDK, LangChain & CrewAI adapters, REST API, CLI — not started.
-- **Phase 3 — dashboard, cost tracking, human-in-loop** is after that.
-- **Phase 4 — time travel debugging + launch** is after that.
+- **Phase 1 — the engine** is **shipped and now correct**. Durable execution, sagas, dead-letter queue, reaper, leader election, worker threads, backpressure — all built and tested. A saga-compensation defect that made rollback a no-op in the real runtime was found and fixed on 2026-07-04 (see "Recent fixes").
+- **Phase 2 — SDK ecosystem** is **in progress**: the Python SDK, the external-worker gRPC RPCs, and rate limiting are done. LangChain/CrewAI adapters, REST API, and CLI are not started.
+- **Phase 3 (dashboard, cost, human-in-loop)** and **Phase 4 (time-travel + hardening + launch)** are not started.
 
-The engine is solid enough today that you could self-host it, write a workflow against the TypeScript SDK, and run it in production. You'd be an early adopter — there's no hosted cloud, no public npm packages, no auth layer, no observability stack — but the core promise (durability + sagas) works.
+You can self-host the engine today, write a workflow against the TypeScript **or** Python SDK, and run it. You'd be an early adopter — no hosted cloud, no auth layer, no observability stack — but the core promise (durability + sagas) now genuinely works end-to-end.
+
+## Recent fixes (2026-07-04)
+
+- ✅ **Saga compensation now works end-to-end.** Previously `compensation_fn` was dropped in the worker→executor IPC path (never persisted), and the compensation registry lived only in the worker thread while rollback ran in the main thread — so real-runtime rollback compensated **zero** steps while the isolation tests stayed green. Fixed by: persisting `compensation_fn`, loading workflows in the main thread, and redesigning compensations to be **pure functions of a step's saved output** declared on `workflow(name, handler, { compensations })`. Proven by a new integration test (`tests/integration/saga-execution.test.ts`) that drives a saga through the real worker path.
+- ✅ **Reaper leader failover fixed.** Followers used to attempt election once at startup and never again, so a dead leader was never replaced. They now re-attempt election each tick and promote themselves when the lease frees.
+- ✅ **Dead code removed** — `RequestCoalescer`, `TaskRepository.findPendingTasks`.
+- ✅ **Postgres remapped to host port 5433** (host 5432 was taken by another Postgres) across compose, env, migration, and tests.
 
 ## Phase 1 — Core Engine [SHIPPED]
 
 ### Infrastructure
-- ✅ Turborepo monorepo with npm workspaces (`apps/engine`, `packages/sdk`, `packages/proto`, `packages/typescript-config`)
-- ✅ Docker Compose for local dev (`postgres:16`, `redis:7`, `qdrant/qdrant`)
+- ✅ Turborepo monorepo with npm workspaces (`apps/engine`, `packages/sdk`, `packages/proto`, `packages/python-sdk`, `packages/typescript-config`)
+- ✅ Docker Compose for local dev (`postgres:16` on host 5433, `redis:7`, `qdrant/qdrant`)
 - ✅ TypeScript 5.9 strict everywhere
 
 ### Data Layer
-- ✅ Three tables — `agent_tasks`, `step_runs`, `dead_letter_queue` — with appropriate indexes
-- ✅ Manual migration script (no auto-migrate on startup, by design)
+- ✅ Three tables — `agent_tasks`, `step_runs`, `dead_letter_queue` — with indexes; `runtime` column routes node vs. external workers
+- ✅ Schema in `apps/engine/src/db/init.sql`, applied on fresh volume and via manual `migrate.ts` (idempotent)
 - ✅ Raw `pg@8.17` with parameterized SQL; no ORM
 - ✅ `FOR UPDATE SKIP LOCKED` as the queue primitive
 
 ### Engine Services
-- ✅ Poller with exponential backoff (100→200→400→500 ms cap)
-- ✅ Heartbeat service (5 s interval per task)
-- ✅ Reaper for stale-task recovery (heartbeat older than 300 s → re-queue or fail)
+- ✅ Poller with exponential backoff (100→200→400→500 ms cap) + backpressure (queue depth + event-loop lag)
+- ✅ Heartbeat service (per-task interval)
+- ✅ Reaper for stale-task recovery, with working leader failover
 - ✅ Redis leader election with Lua check-and-renew (`SET NX EX` + atomic EXPIRE)
-- ✅ Backpressure: pauses ingestion when `queueSize >= MAX_QUEUE_SIZE` or `eventLoopLag >= MAX_EVENT_LOOP_LAG`
-- ✅ Piscina worker thread pool (size = `max(2, cpuCores - 1)`)
-- ✅ MessageChannel IPC between main thread and workers with 30 s per-request timeout
+- ✅ Piscina worker thread pool (size = `max(2, cpuCores - 1)`) + MessageChannel IPC (30 s timeout)
 
 ### gRPC Surface (`@grpc/grpc-js` 1.9)
-- ✅ `SubmitTask`
-- ✅ `GetTaskStatus`
-- ✅ `CancelTask`
-- ✅ Health service (`grpc.health.v1.Health`)
-- ✅ Reflection (for `grpcurl` debugging)
-- ⚠️ `GetStep` / `CompleteStep` / `FailStep` declared in proto but **not yet wired** — reserved for SDK crash recovery
+- ✅ `SubmitTask`, `GetTaskStatus`, `CancelTask` (with in-flight cancel + auto-rollback)
+- ✅ `GetStep` / `CompleteStep` / `FailStep` (SDK step recovery) — **now wired**
+- ✅ `DequeueTask` / `Heartbeat` / `CompleteTask` / `FailTask` (external-worker lifecycle)
+- ✅ `GetRateLimitStatus` / `ResetRateLimit`
+- ✅ Health service (`grpc.health.v1.Health`) + reflection
 
 ### SDK (`@duraflow/sdk`)
-- ✅ `workflow(name, handler)` registration
-- ✅ `step.run(name, fn, opts)` with memoization on `(task_id, step_key)`
-- ✅ `compensation` option on `StepOptions`
-- ✅ `retries` option with `StepRetryError` and exponential backoff
+- ✅ `workflow(name, handler, { compensations })` registration
+- ✅ `step.run(name, fn, opts)` with memoization on `(task_id, step_key)`, `retries`, `rateLimit`
+- ✅ Compensations as pure functions of saved output, registered by name at module load
 - ✅ `serialize` / `deserialize` (superjson) with 1 MB cap and `SerializationError`
-- ✅ `registerCompensation(name, fn)` for manual registration
 
 ### Saga Pattern
-- ✅ LIFO compensation over completed steps with `compensation_fn`
-- ✅ Per-compensation timeout (default 30 s)
-- ✅ Failed compensations route to `dead_letter_queue`
-- ✅ Terminal task status `rolled_back` (all succeeded) or `partial_rollback` (some failed)
-- ✅ Example workflow: `apps/engine/src/workflows/booking-saga.ts` (3-step flight/hotel/car/payment)
+- ✅ LIFO compensation over completed steps, per-compensation timeout (default 30 s)
+- ✅ Failed compensations route to `dead_letter_queue`; `rolled_back` vs `partial_rollback`
+- ✅ Example: `apps/engine/tests/workflows/booking-saga.ts`
+- ✅ **Proven end-to-end** through the real worker path (`tests/integration/saga-execution.test.ts`)
 
 ### Testing
 - ✅ Three-tier model under `apps/engine/tests/{unit,integration,e2e}/`
-- ✅ **Unit (7)**: backoff, heartbeat, leader-elector, poller, reaper, step-repository, task-repository
-- ✅ **Integration (4)**: crash-recovery, dequeue-concurrent, saga, workflow-executor
-- ✅ **E2E (1)**: grpc (spawns engine subprocess, drives with real gRPC client)
-- ⚠️ Concurrency stress test exists but only exercises 10 tasks. The original plan called for a 10,000-task stress test. **Not yet done.**
+- ✅ **16 suites, 72 tests — all green** (unit + integration + e2e)
+- ⚠️ Large-scale stress test (10k tasks) still not done
 
-### Documentation
-- ✅ VitePress site at [duraflow-docs.vercel.app](https://duraflow-docs.vercel.app) — installation, tutorial, core concepts, sagas deep-dive, API reference, database schema
-- ✅ Code-level reference in `knowledge-base/` (ARCHITECTURE, PATTERNS, DEPENDENCY-MAP, FLOWS, GOTCHAS, GLOSSARY)
-- ✅ Project rules and skills under `.claude/` for Claude Code users
+## Phase 2 — SDK Ecosystem [IN PROGRESS]
 
-## Phase 2 — SDK Ecosystem [NOT STARTED]
-
-These are planned but **no code exists yet**:
-
-- ❌ Python SDK (`pip install duraflow`)
+- ✅ **Python SDK** (`packages/python-sdk`) — `@workflow` decorator, `StepRunner`, standalone `Worker` over the external-worker RPCs
+- ✅ **External-worker gRPC RPCs** + `runtime` routing (node = internal executor, python = external worker)
+- ✅ **Rate limiting** — Redis token-bucket (Lua), per-API presets (OpenAI / Anthropic), integrated into `step.run`
 - ❌ LangChain adapter (`duraflow.wrap(chain)`)
 - ❌ CrewAI adapter (`duraflow.wrap(crew)`)
-- ❌ REST API wrapper (Express)
-- ❌ Webhook triggers
-- ❌ Scheduled runs (cron)
+- ❌ REST API wrapper (Express) + webhooks + scheduled/cron triggers
 - ❌ CLI (`duraflow init` / `dev` / `deploy` / `runs` / `logs`)
-- ❌ Rate limiting (Redis token bucket, per-API limits for OpenAI / Anthropic)
+
+> Note: the external-worker (Python) path currently supports whole-task execution only — it does **not** yet have step memoization or saga semantics through the engine. That parity is an open decision.
 
 ## Phase 3 — Dashboard & Production Features [NOT STARTED]
 
-`apps/dashboard/` exists as an empty placeholder directory. None of the following exists in code:
-
-- ❌ React dashboard application
-- ❌ Runs list page
-- ❌ Run detail / step timeline / log viewer
-- ❌ Slack notifications
-- ❌ Usage dashboard
-- ❌ Token / cost tracking (no `tokens` column, no cost service)
-- ❌ Human-in-loop approvals (`ctx.waitForApproval`, approval table)
-- ❌ Workflow management UI
+`apps/dashboard/` is an empty placeholder. React dashboard, runs list, step timeline, log viewer, cost/token tracking, human-in-loop approvals, Slack notifications — none exist.
 
 ## Phase 4 — Time Travel + Launch [NOT STARTED]
 
-- ❌ Fork-run schema
-- ❌ Replay API (re-execute from arbitrary step with modified input)
-- ❌ Time-travel UI
-- ❌ Demo video, Product Hunt assets, Hacker News post, launch content
-- ❌ Production deployment infrastructure (CI/CD, monitoring, alerting)
+Fork-and-replay (deterministic replay), TLS, auth, multi-tenancy, OpenTelemetry/Prometheus, launch assets — none exist.
 
 ## Production-Readiness Gaps
 
-These deliberately do not exist today and need to be addressed before non-trusted-network deployment:
+Deliberately absent; must be addressed before non-trusted-network deployment:
 
-- ❌ **Authentication / authorization** — gRPC uses `createInsecure()`. There is no JWT, no API key, no per-RPC permission model. Assumption is a trusted private network.
-- ❌ **Multi-tenancy** — no `tenant_id` columns, no row-level security, no per-tenant quotas.
-- ❌ **TLS** — no SSL credentials on the gRPC server.
-- ❌ **OpenTelemetry / Prometheus / structured logging** — logging is `console.log` with TAG prefixes (e.g., `[poller]`, `[reaper]`); no metrics export, no traces.
-- ❌ **Audit logging** — no `audit_log` table or service-level recording of sensitive operations.
-- ❌ **No ESLint config file** — `lint` scripts exist in every workspace but no `eslint.config.*` is present, so `turbo run lint` is a no-op today. `turbo run check-types` and `turbo run build` are the hard guarantees.
+- ❌ **Auth / authorization** — gRPC uses `createInsecure()`; no JWT/API key, no per-RPC permissions
+- ❌ **Multi-tenancy** — no `tenant_id`, no row-level security, no per-tenant quotas
+- ❌ **TLS** on the gRPC server
+- ❌ **OpenTelemetry / Prometheus / structured logging** — logging is TAG-prefixed `console.log`
+- ❌ **Audit logging**
 
-## Known Issues to Fix
+## Known Issues
 
-These are in the code or in the proto and need correcting:
+Most issues from earlier revisions of this file are now fixed (proto enum drift, missing `started_at`, cancellation not signalling the worker, saga rollback not wired, LIFO tie ordering). Remaining:
 
-1. **Proto enum drift.** `agent.service.proto` is missing `ROLLED_BACK` and `PARTIAL_ROLLBACK`. The handler returns them as uppercase strings, but typed proto clients will see `TASK_STATUS_UNSPECIFIED`.
-2. **Cancellation does not signal the worker.** `CancelTask` flips the row to `cancelled`, but if the worker is mid-execution, it can still flip back to `completed`. There is no in-flight cancellation today.
-3. **Cancellation does not auto-rollback.** A cancelled task with completed steps is NOT routed to `RollbackOrchestrator` automatically.
-4. **`GetStep` / `CompleteStep` / `FailStep` RPCs declared but not wired.** Clients calling them get `UNIMPLEMENTED`. Reserved for future SDK crash-recovery features.
-5. **No `started_at` column on `agent_tasks`** despite some older docs referencing it. The actual column set is in the migration script and the entity interface.
-
-## Update Cadence
-
-This file is the single source of truth for "where are we." Whenever a phase ships or a known issue is fixed, this file gets updated in the same commit. If you spot drift, it is a bug — open an issue or PR.
+1. The **external-worker path lacks step/saga semantics** (see Phase 2 note).
+2. **No large-scale stress test** proving throughput/latency under load.
+3. `docs/` VitePress site and parts of `knowledge-base/` may lag the code — treat the code as source of truth.

@@ -30,9 +30,11 @@ The engine is production-capable for early adopters running it on a trusted netw
 
 ---
 
-## Phase 2 — SDK Ecosystem [NEXT]
+## Phase 2 — SDK Ecosystem [IN PROGRESS]
 
 **Goal:** Make Duraflow easy to *adopt*. The engine works; now meet developers where they are.
+
+**Shipped so far:** the **Python SDK** (external worker over gRPC) + the **external-worker RPCs** (`DequeueTask`/`Heartbeat`/`CompleteTask`/`FailTask`), and **rate limiting** (Redis token bucket, per-API presets, integrated into `step.run`). Still to do: framework adapters, REST API, CLI. *(The external-worker path currently runs whole tasks only — no step/saga semantics yet.)*
 
 ### Python SDK
 - `pip install duraflow`

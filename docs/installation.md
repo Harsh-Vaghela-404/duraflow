@@ -29,7 +29,7 @@ docker-compose up -d
 
 This starts:
 
-- **PostgreSQL** on `localhost:5432`
+- **PostgreSQL** on `localhost:5433`
 - **Redis** on `localhost:6379`
 
 ### 3. Run Database Migrations
@@ -92,7 +92,7 @@ sudo systemctl start redis
 Create `.env` file:
 
 ```bash
-DATABASE_URL=postgres://duraflow:duraflow@localhost:5432/duraflow
+DATABASE_URL=postgres://duraflow:duraflow@localhost:5433/duraflow
 REDIS_URL=redis://localhost:6379
 ```
 
