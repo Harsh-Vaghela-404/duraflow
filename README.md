@@ -19,7 +19,7 @@
   <img src="https://img.shields.io/badge/TypeScript-5.9-3178C6.svg?logo=typescript&logoColor=white" alt="TypeScript">
 </p>
 
-> **Status:** Phase 1 (the engine) is shipped and tested. Phase 2 (SDK ecosystem) is in progress — the Python SDK and rate limiting are done; LangChain/CrewAI adapters, REST, and CLI are next. See [product/status.md](product/status.md) for the honest line-item state.
+> **Status:** Phase 1 — the core engine — is **shipped and tested**; the Python SDK and rate limiting also shipped. The active roadmap is a hand-built deepening of the engine's distributed-systems core — durable timers, deterministic replay, signals, child workflows, versioning, and more. See [Roadmap — Deep Engine Features](#roadmap--deep-engine-features) below, and [product/status.md](product/status.md) for the honest line-item state.
 
 ---
 
@@ -123,30 +123,31 @@ grpcurl -plaintext localhost:50051 grpc.health.v1.Health/Check
 - ✅ **Three-tier test suite**: 16 suites (unit / integration / e2e), 72 tests — all green
 - ✅ **Public documentation site** at [duraflow-docs.vercel.app](https://duraflow-docs.vercel.app)
 
-### Phase 2 — SDK Ecosystem [IN PROGRESS]
+### Also Shipped
 
 - ✅ **Python SDK** — `@workflow` decorator, `StepRunner`, standalone worker over the external-worker gRPC RPCs (`packages/python-sdk`)
 - ✅ **Rate limiting** — Redis token bucket with per-API presets (OpenAI / Anthropic), integrated into `step.run`
-- 🔜 LangChain adapter (`duraflow.wrap(chain)`)
-- 🔜 CrewAI adapter (`duraflow.wrap(crew)`)
-- 🔜 REST API wrapper + webhooks + scheduled triggers
-- 🔜 CLI (`duraflow init` / `dev` / `deploy` / `runs` / `logs`)
 
-### Phase 3 — Dashboard, Cost, Human-in-Loop [LATER]
+---
 
-- 🔜 React dashboard (runs list, step timeline, log streaming)
-- 🔜 Token / cost tracking
-- 🔜 `ctx.waitForApproval()` for human-in-loop steps
-- 🔜 Slack / webhook notifications
+## Roadmap — Deep Engine Features
 
-### Phase 4 — Time Travel + Launch [LATER]
+The next chapter isn't more breadth (adapters, wrappers, CLIs) — it's **depth**. These are the hard distributed-systems features that define a real durable-execution engine, built by hand, in this order:
 
-- 🔜 Fork-and-replay debugging (replay from arbitrary step without re-paying for earlier work)
-- 🔜 Auth layer (gRPC interceptor + Metadata-based)
-- 🔜 OpenTelemetry / Prometheus / TLS
-- 🔜 Multi-tenancy (row-level security, per-tenant quotas)
+| # | Feature | What it unlocks |
+|---|---|---|
+| 1 | **Durable timers** (`ctx.sleep`) | Suspend a run to the DB and resume after a delay — survives an engine restart |
+| 2 | **Deterministic replay** (event-sourced history) | Rebuild run state by folding an append-only event log; crash-resume with no recompute — the crown jewel |
+| 3 | **Signals / wait-for-event** | Block a run until an external event arrives (human-in-loop without a dashboard) |
+| 4 | **Child workflows + parallel steps** | Composition, fan-out / fan-in, dependency graphs |
+| 5 | **Workflow versioning** | Run in-flight executions on old code while new submissions use new code |
+| 6 | **Horizontal sharding** | Partition dispatch across N nodes — scale past one engine |
+| 7 | **Exactly-once side effects** | Idempotency keys so a retried step can't double-charge |
+| 8 | **OpenTelemetry + Prometheus** | Traces across the step boundary; queue-depth / lag / task metrics |
+| 9 | **Load benchmark harness** | 10k-task throughput + p99 latency numbers |
+| 10 | **Read-only runs dashboard** | Runs list + step timeline — makes the engine demoable |
 
-See [product/roadmap.md](product/roadmap.md) for the full plan.
+Depth over breadth: a general-purpose durable-execution engine with a distributed-systems core you can defend line by line.
 
 ---
 
@@ -216,7 +217,7 @@ This is a young project. The fastest way to help:
 
 1. **Try it.** Clone, run, build a workflow. File issues for anything confusing.
 2. **Read [knowledge-base/GOTCHAS.md](knowledge-base/GOTCHAS.md)** before touching code — there are conventions (the `TAG` logging pattern, `FOR UPDATE SKIP LOCKED` as the queue primitive, no generic Redis caching, etc.) that you'll want to know up front.
-3. **PRs welcome** for: more test coverage, fixing the known issues listed in [product/status.md](product/status.md), and anything on the Phase 2 list above.
+3. **PRs welcome** for: more test coverage, fixing the known issues listed in [product/status.md](product/status.md), and anything on the roadmap above.
 
 Conventional commits, feature branches off `main`. See [knowledge-base/](knowledge-base/) for the full developer-facing conventions.
 

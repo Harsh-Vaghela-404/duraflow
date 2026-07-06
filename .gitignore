@@ -46,3 +46,4 @@ yarn-error.log*
 
 # Proto generated files — run `buf generate` or `protoc` to regenerate
 packages/proto/generated/
+.env*.local
