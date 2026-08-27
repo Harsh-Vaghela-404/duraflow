@@ -40,10 +40,13 @@ yarn-error.log*
 # Internal/strategic docs and planning artifacts (local-only)
 .agent
 
-# Claude Code config — kept local, not pushed
+# Claude Code config - kept local, not pushed
 .claude/
 /CLAUDE.md
 
-# Proto generated files — run `buf generate` or `protoc` to regenerate
+# Personal thinking/decision log - not for the public repo
+/decision-log.md
+
+# Proto generated files - run `buf generate` or `protoc` to regenerate
 packages/proto/generated/
 .env*.local
