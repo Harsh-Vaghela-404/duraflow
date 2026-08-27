@@ -15,43 +15,43 @@ Use the saga pattern when your workflow performs **multiple side effects** that 
 
 ## Quick Example
 
-Compensations are declared in a `compensations` map on the workflow, keyed by step key. Each one is a **pure function of that step's saved output** — see [Compensation Function](#compensation-function) for why.
+Compensations are declared in a `compensations` map on the workflow, keyed by step key. Each one is a **pure function of that step's saved output** - see [Compensation Function](#compensation-function) for why.
 
 ```typescript
-import { workflow } from "@duraflow/sdk";
+import { workflow } from '@duraflow/sdk';
 
 const bookingWorkflow = workflow(
-  "booking",
-  async (ctx) => {
-    const flight = await ctx.step.run("book-flight", async () => {
-      return await api.bookFlight(ctx.input.flightDetails);
-    });
+    'booking',
+    async (ctx) => {
+        const flight = await ctx.step.run('book-flight', async () => {
+            return await api.bookFlight(ctx.input.flightDetails);
+        });
 
-    const hotel = await ctx.step.run("book-hotel", async () => {
-      return await api.bookHotel(ctx.input.hotelDetails);
-    });
+        const hotel = await ctx.step.run('book-hotel', async () => {
+            return await api.bookHotel(ctx.input.hotelDetails);
+        });
 
-    // If this step fails, both flight and hotel are automatically cancelled.
-    const payment = await ctx.step.run("charge-payment", async () => {
-      const result = await api.charge(ctx.input.payment);
-      if (!result.success) throw new Error("Payment failed");
-      return result;
-    });
+        // If this step fails, both flight and hotel are automatically cancelled.
+        const payment = await ctx.step.run('charge-payment', async () => {
+            const result = await api.charge(ctx.input.payment);
+            if (!result.success) throw new Error('Payment failed');
+            return result;
+        });
 
-    return { flight, hotel, payment };
-  },
-  {
-    // Keyed by step key. Run in LIFO order over completed steps on failure.
-    compensations: {
-      "book-flight": async (output) => {
-        await api.cancelFlight(output.flightId);
-      },
-      "book-hotel": async (output) => {
-        await api.cancelHotel(output.hotelId);
-      },
-      // charge-payment has no compensation — nothing to undo.
+        return { flight, hotel, payment };
     },
-  },
+    {
+        // Keyed by step key. Run in LIFO order over completed steps on failure.
+        compensations: {
+            'book-flight': async (output) => {
+                await api.cancelFlight(output.flightId);
+            },
+            'book-hotel': async (output) => {
+                await api.cancelHotel(output.hotelId);
+            },
+            // charge-payment has no compensation - nothing to undo.
+        },
+    },
 );
 ```
 
@@ -74,9 +74,9 @@ This reverse order matters because later steps often depend on earlier ones.
 
 ## Compensation Function
 
-A compensation receives the step's **saved output** (read back from the database) and undoes its effects. It **must be a pure function of that output** — it may not close over variables from the workflow handler.
+A compensation receives the step's **saved output** (read back from the database) and undoes its effects. It **must be a pure function of that output** - it may not close over variables from the workflow handler.
 
-Why: a rollback can run in a different process (or after a crash) than the one that executed the step. Only what the step *returned and persisted* is guaranteed to be available. Compensations are registered by step key at module load, so the engine can resolve and run them anywhere.
+Why: a rollback can run in a different process (or after a crash) than the one that executed the step. Only what the step _returned and persisted_ is guaranteed to be available. Compensations are registered by step key at module load, so the engine can resolve and run them anywhere.
 
 ```typescript
 // Declared in the workflow's `compensations` map, keyed by step key:
@@ -91,121 +91,112 @@ compensations: {
 ## Full Example: Travel Booking
 
 ```typescript
-import { workflow } from "@duraflow/sdk";
+import { workflow } from '@duraflow/sdk';
 
 interface BookingInput {
-  destination: string;
-  dates: { start: string; end: string };
-  travelers: number;
-  paymentMethod: string;
+    destination: string;
+    dates: { start: string; end: string };
+    travelers: number;
+    paymentMethod: string;
 }
 
 interface BookingOutput {
-  confirmation: {
-    flight: string;
-    hotel: string;
-    car: string;
-  };
-  total: number;
+    confirmation: {
+        flight: string;
+        hotel: string;
+        car: string;
+    };
+    total: number;
 }
 
 // Compensation functions
 async function cancelFlight(output: any) {
-  console.log(`[saga] Cancelling flight ${output.flightId}`);
-  await fetch(`https://airline-api.com/bookings/${output.flightId}`, {
-    method: "DELETE",
-  });
+    console.log(`[saga] Cancelling flight ${output.flightId}`);
+    await fetch(`https://airline-api.com/bookings/${output.flightId}`, {
+        method: 'DELETE',
+    });
 }
 
 async function cancelHotel(output: any) {
-  console.log(`[saga] Cancelling hotel ${output.hotelId}`);
-  await fetch(`https://hotel-api.com/reservations/${output.hotelId}`, {
-    method: "DELETE",
-  });
+    console.log(`[saga] Cancelling hotel ${output.hotelId}`);
+    await fetch(`https://hotel-api.com/reservations/${output.hotelId}`, {
+        method: 'DELETE',
+    });
 }
 
 async function cancelCar(output: any) {
-  console.log(`[saga] Cancelling car ${output.carId}`);
-  await fetch(`https://car-api.com/rentals/${output.carId}`, {
-    method: "DELETE",
-  });
+    console.log(`[saga] Cancelling car ${output.carId}`);
+    await fetch(`https://car-api.com/rentals/${output.carId}`, {
+        method: 'DELETE',
+    });
 }
 
-// Workflow definition — compensations are attached in the options below.
+// Workflow definition - compensations are attached in the options below.
 export const bookingSaga = workflow<BookingInput, BookingOutput>(
-  "booking",
-  async (ctx) => {
-    const { destination, dates, travelers, paymentMethod } = ctx.input;
+    'booking',
+    async (ctx) => {
+        const { destination, dates, travelers, paymentMethod } = ctx.input;
 
-    // Step 1: Book flight
-    const flight = await ctx.step.run(
-      "book-flight",
-      async () => {
-        const res = await fetch("https://airline-api.com/book", {
-          method: "POST",
-          body: JSON.stringify({ destination, dates, travelers }),
+        // Step 1: Book flight
+        const flight = await ctx.step.run('book-flight', async () => {
+            const res = await fetch('https://airline-api.com/book', {
+                method: 'POST',
+                body: JSON.stringify({ destination, dates, travelers }),
+            });
+            return { flightId: res.id, price: res.price };
         });
-        return { flightId: res.id, price: res.price };
-      },
-    );
 
-    // Step 2: Book hotel
-    const hotel = await ctx.step.run(
-      "book-hotel",
-      async () => {
-        const res = await fetch("https://hotel-api.com/reserve", {
-          method: "POST",
-          body: JSON.stringify({ destination, dates }),
+        // Step 2: Book hotel
+        const hotel = await ctx.step.run('book-hotel', async () => {
+            const res = await fetch('https://hotel-api.com/reserve', {
+                method: 'POST',
+                body: JSON.stringify({ destination, dates }),
+            });
+            return { hotelId: res.id, price: res.price };
         });
-        return { hotelId: res.id, price: res.price };
-      },
-    );
 
-    // Step 3: Book car
-    const car = await ctx.step.run(
-      "book-car",
-      async () => {
-        const res = await fetch("https://car-api.com/rent", {
-          method: "POST",
-          body: JSON.stringify({ destination, dates }),
+        // Step 3: Book car
+        const car = await ctx.step.run('book-car', async () => {
+            const res = await fetch('https://car-api.com/rent', {
+                method: 'POST',
+                body: JSON.stringify({ destination, dates }),
+            });
+            return { carId: res.id, price: res.price };
         });
-        return { carId: res.id, price: res.price };
-      },
-    );
 
-    // Step 4: Process payment (failure point)
-    const total = flight.price + hotel.price + car.price;
-    const payment = await ctx.step.run("charge-payment", async () => {
-      const res = await fetch("https://payment-api.com/charge", {
-        method: "POST",
-        body: JSON.stringify({
-          amount: total,
-          method: paymentMethod,
-        }),
-      });
+        // Step 4: Process payment (failure point)
+        const total = flight.price + hotel.price + car.price;
+        const payment = await ctx.step.run('charge-payment', async () => {
+            const res = await fetch('https://payment-api.com/charge', {
+                method: 'POST',
+                body: JSON.stringify({
+                    amount: total,
+                    method: paymentMethod,
+                }),
+            });
 
-      if (!res.success) {
-        throw new Error(`Payment failed: ${res.error}`);
-      }
-      return { transactionId: res.transactionId };
-    });
+            if (!res.success) {
+                throw new Error(`Payment failed: ${res.error}`);
+            }
+            return { transactionId: res.transactionId };
+        });
 
-    return {
-      confirmation: {
-        flight: flight.flightId,
-        hotel: hotel.hotelId,
-        car: car.carId,
-      },
-      total,
-    };
-  },
-  {
-    compensations: {
-      "book-flight": cancelFlight,
-      "book-hotel": cancelHotel,
-      "book-car": cancelCar,
+        return {
+            confirmation: {
+                flight: flight.flightId,
+                hotel: hotel.hotelId,
+                car: car.carId,
+            },
+            total,
+        };
     },
-  },
+    {
+        compensations: {
+            'book-flight': cancelFlight,
+            'book-hotel': cancelHotel,
+            'book-car': cancelCar,
+        },
+    },
 );
 ```
 
@@ -216,18 +207,16 @@ export const bookingSaga = workflow<BookingInput, BookingOutput>(
 Compensations can be called multiple times (e.g., manual retry from DLQ). Design them to succeed regardless of how many times they run:
 
 ```typescript
-// ✅ Good: Safe to call multiple times
+// Safe to call more than once - a 404 means it's already cancelled.
 async function cancelFlight(output) {
-  const res = await fetch(`/flights/${output.id}`, { method: "DELETE" });
-  // 404 = already cancelled, treat as success
-  if (res.status === 404 || res.status === 200) return;
-  if (!res.ok) throw new Error("Cancel failed");
+    const res = await fetch(`/flights/${output.id}`, { method: 'DELETE' });
+    if (res.status === 404 || res.status === 200) return;
+    if (!res.ok) throw new Error('Cancel failed');
 }
 
-// ❌ Bad: Throws on second call
+// Not safe - the second call throws because the row is already gone.
 async function cancelFlight(output) {
-  await db.delete("flights", { id: output.id });
-  // Second call fails - row already deleted
+    await db.delete('flights', { id: output.id });
 }
 ```
 
@@ -237,17 +226,17 @@ External APIs can be slow during failures. Add explicit timeouts:
 
 ```typescript
 async function cancelHotel(output) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10000);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
 
-  try {
-    await fetch(`/hotels/${output.id}`, {
-      method: "DELETE",
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
+    try {
+        await fetch(`/hotels/${output.id}`, {
+            method: 'DELETE',
+            signal: controller.signal,
+        });
+    } finally {
+        clearTimeout(timeout);
+    }
 }
 ```
 
@@ -295,7 +284,7 @@ Compensations run during failures when debugging is hardest:
 Purely computational steps don't need compensations:
 
 ```typescript
-// No entry in the compensations map — just parsing data:
+// No entry in the compensations map - just parsing data:
 const data = await ctx.step.run("parse-csv", async () => {
   return parseCSV(rawInput);
 });
@@ -310,7 +299,7 @@ compensations: {
   "create-user": async (output) => {
     await api.deleteUser(output.id);
   },
-  // (no "parse-csv" key — nothing to undo)
+  // (no "parse-csv" key - nothing to undo)
 }
 ```
 
@@ -326,7 +315,7 @@ When a compensation fails:
 ### Check DLQ
 
 ```typescript
-import { DeadLetterQueueRepository } from "@duraflow/engine";
+import { DeadLetterQueueRepository } from '@duraflow/engine';
 
 // List failed compensations for a task
 const dlqItems = await dlqRepo.findByTaskId(taskId);
@@ -342,9 +331,9 @@ const allItems = await dlqRepo.findAll(100, 0);
 const result = await dlqRepo.retry(dlqItemId);
 
 if (result.success) {
-  console.log("Compensation succeeded");
+    console.log('Compensation succeeded');
 } else {
-  console.log("Still failing:", result.error);
+    console.log('Still failing:', result.error);
 }
 ```
 
@@ -365,12 +354,12 @@ By default, compensations timeout after 30 seconds. You can customize:
 ```typescript
 // In engine configuration
 const rollbackOrchestrator = new RollbackOrchestrator(pool, {
-  compensationTimeoutMs: 60000, // 60 seconds
+    compensationTimeoutMs: 60000, // 60 seconds
 });
 
 // Or per-rollback
 await rollbackOrchestrator.rollback(taskId, {
-  compensationTimeoutMs: 10000, // 10 seconds
+    compensationTimeoutMs: 10000, // 10 seconds
 });
 ```
 
@@ -382,8 +371,4 @@ If a compensation times out:
 
 ---
 
-## Related Topics
-
-- [Core Concepts](./concepts) - Task lifecycle, SKIP LOCKED, Reaper
-- [API Reference](./api/overview) - Full API docs
-- [Tutorial](./tutorial) - Build your first workflow
+For the task-lifecycle side of this (SKIP LOCKED, the reaper), see [Core Concepts](./concepts).

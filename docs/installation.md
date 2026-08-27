@@ -16,7 +16,7 @@ This guide covers setting up Duraflow for development and production.
 ### 1. Clone and Install
 
 ```bash
-git clone https://github.com/your-org/duraflow.git
+git clone https://github.com/Harsh-Vaghela-404/duraflow.git
 cd duraflow
 npm install
 ```
@@ -166,7 +166,4 @@ console.log(response.taskId);
 
 - Ensure workflow file is loaded via `DURAFLOW_WORKFLOWS` env var
 
-## Next Steps
-
-- [Your First Workflow](./tutorial) - Build a complete workflow
-- [Core Concepts](./concepts) - Understand the architecture
+Once it's up, head to [your first workflow](./tutorial).

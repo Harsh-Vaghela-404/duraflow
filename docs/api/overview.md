@@ -29,7 +29,7 @@ HTTP-based access for web applications and easier integration.
 The TypeScript SDK provides the easiest way to define workflows.
 
 ```typescript
-import { workflow, step } from "@duraflow/sdk";
+import { workflow } from "@duraflow/sdk";
 
 const myWorkflow = workflow("my-workflow", async (ctx) => {
   const result = await ctx.step.run("my-step", async () => {
@@ -38,6 +38,8 @@ const myWorkflow = workflow("my-workflow", async (ctx) => {
   return result;
 });
 ```
+
+`step` isn't a top-level import - it's `ctx.step`, handed to you inside the workflow handler.
 
 ## Port Configuration
 
@@ -83,8 +85,5 @@ console.log("Success:", result.success);
 
 ---
 
-## Next Sections
-
-- [SDK Reference](./sdk) - TypeScript SDK API
-- [gRPC Reference](./grpc) - Full gRPC specification
-- [Database Schema](/database) - Table structures
+See [SDK Reference](./sdk) for the full TypeScript API, [gRPC Reference](./grpc) for
+the wire-level spec, or [Database Schema](/database) for the underlying tables.

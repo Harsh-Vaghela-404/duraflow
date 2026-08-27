@@ -12,12 +12,12 @@ A **workflow** is a named function that defines a series of steps to execute. Ea
 - Can have any number of steps
 
 ```typescript
-const myWorkflow = workflow("my-workflow", async (ctx) => {
-  // ctx.runId - unique identifier for this run
-  // ctx.workflowName - "my-workflow"
-  // ctx.input - the input data passed to the workflow
-  // ctx.step - the step runner
-  return { result: "done" };
+const myWorkflow = workflow('my-workflow', async (ctx) => {
+    // ctx.runId - unique identifier for this run
+    // ctx.workflowName - "my-workflow"
+    // ctx.input - the input data passed to the workflow
+    // ctx.step - the step runner
+    return { result: 'done' };
 });
 ```
 
@@ -32,16 +32,16 @@ A **step** is a single unit of work within a workflow. Steps are executed sequen
 
 ```typescript
 const result = await ctx.step.run(
-  "step-name",
-  async () => {
-    return { data: "output" };
-  },
-  {
-    retries: 3, // Retry 3 times on failure
-    timeout: 30000, // 30 second timeout
-  },
+    'step-name',
+    async () => {
+        return { data: 'output' };
+    },
+    {
+        retries: 3, // Retry 3 times on failure
+        timeout: 30000, // 30 second timeout
+    },
 );
-// Compensations are declared separately, on the workflow — see Saga Pattern below.
+// Compensations are declared separately, on the workflow - see Saga Pattern below.
 ```
 
 ## Crash Recovery (Memoization)
@@ -63,51 +63,16 @@ AND status = 'completed';
 
 ## Task Lifecycle
 
-```
-┌─────────┐     ┌─────────┐     ┌────────────┐     ┌──────────┐
-│ PENDING │────▶│ RUNNING │────▶│ COMPLETED   │     │          │
-└─────────┘     └─────────┘     └────────────┘     │          │
-    │               │               │               │          │
-    │               │               │               ▼          │
-    │               │               │         ┌──────────┐    │
-    │               │               │         │  FAILED   │    │
-    │               │               │         └──────────┘    │
-    │               │               │               │          │
-    │               │               │               ▼          │
-    │               │               │         ┌────────────┐  │
-    │               │               │         │ ROLLED_BACK │◀───┘
-    │               │               │         └────────────┘      │
-    │               │               │               │            │
-    │               │               │               ▼            │
-    │               │               │         ┌───────────────┐  │
-    │               │               │         │PARTIAL_ROLLBACK│
-    └───────────────┴───────────────┴─────────┴───────────────┘
-                            │
-                            ▼
-                      ┌────────────┐
-                      │ CANCELLED  │
-                      └────────────┘
-```
+`PENDING → RUNNING`, then one of:
 
-## Multi-Worker Architecture
+- `COMPLETED` - every step succeeded
+- `FAILED` - a step failed and there was nothing to compensate
+- `ROLLED_BACK` - a step failed, and every compensation for the completed steps succeeded
+- `PARTIAL_ROLLBACK` - a step failed, and at least one compensation itself failed (check the DLQ)
 
-Duraflow supports multiple workers processing tasks concurrently:
+`CANCELLED` can happen from `PENDING` or `RUNNING` via `CancelTask`, independent of the above.
 
-```
-Worker 1                    Worker 2                    Worker 3
-   │                          │                          │
-   ▼                          ▼                          ▼
-┌─────────┐              ┌─────────┐              ┌─────────┐
-│ Dequeue │              │ Dequeue │              │ Dequeue │
-│  Task   │              │  Task   │              │  Task   │
-└─────────┘              └─────────┘              └─────────┘
-   │                          │                          │
-   ▼                          ▼                          ▼
-┌─────────┐              ┌─────────┐              ┌─────────┐
-│ SKIP    │              │ SKIP    │              │  Claim  │
-│ LOCKED  │              │ LOCKED   │              │  Task   │
-└─────────┘              └─────────┘              └─────────┘
-```
+## Multi-Worker Safety
 
 ### SKIP LOCKED
 
@@ -164,21 +129,21 @@ When a workflow fails, Duraflow can automatically undo completed steps:
 
 ```typescript
 const bookingWorkflow = workflow(
-  "booking",
-  async (ctx) => {
-    const flight = await ctx.step.run("book-flight", async () => {
-      return await api.bookFlight(details);
-    });
-    // ...more steps
-  },
-  {
-    // Keyed by step key; a pure function of the step's saved output.
-    compensations: {
-      "book-flight": async (output) => {
-        await api.cancelFlight(output.flightId);
-      },
+    'booking',
+    async (ctx) => {
+        const flight = await ctx.step.run('book-flight', async () => {
+            return await api.bookFlight(details);
+        });
+        // ...more steps
     },
-  },
+    {
+        // Keyed by step key; a pure function of the step's saved output.
+        compensations: {
+            'book-flight': async (output) => {
+                await api.cancelFlight(output.flightId);
+            },
+        },
+    },
 );
 ```
 

@@ -2,15 +2,9 @@
 
 Duraflow is a **durable workflow engine** that ensures your workflows complete reliably, even after crashes. It combines crash recovery with the saga pattern for automatic rollback.
 
-## Why Duraflow?
-
-| Problem                               | Duraflow Solution                         |
-| ------------------------------------- | ----------------------------------------- |
-| Workflow crashes mid-execution        | Resume from last successful step          |
-| Partial failure in multi-step process | Automatic rollback via saga pattern       |
-| Multiple workers competing for tasks  | SKIP LOCKED prevents duplicate processing |
-| Worker dies while processing          | Reaper recovers stale tasks               |
-| API rate limits                       | Built-in rate limiting support            |
+If a worker dies mid-run, the workflow picks up from the last completed step instead
+of starting over. If a step fails after others already ran, their compensations undo
+what already happened, in reverse order. That's the whole pitch.
 
 ## Installation
 
@@ -67,67 +61,17 @@ const response = await client.submitTask({
 console.log("Task ID:", response.taskId);
 ```
 
-## Architecture Overview
+## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        Duraflow Engine                       │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│  ┌──────────┐    ┌──────────┐    ┌──────────┐             │
-│  │  Poller  │───▶│ Executor  │───▶│  Worker   │             │
-│  └──────────┘    └──────────┘    └──────────┘             │
-│       │               │               │                     │
-│       ▼               ▼               ▼                     │
-│  ┌─────────────────────────────────────────────┐           │
-│  │           PostgreSQL Database               │           │
-│  │  - agent_tasks (workflow runs)               │           │
-│  │  - step_runs (step checkpoints)             │           │
-│  │  - dead_letter_queue (failed comps)          │           │
-│  └─────────────────────────────────────────────┘           │
-│                                                              │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
-│  │   Reaper    │  │  Heartbeat  │  │  Leader     │        │
-│  │ (recovery)  │  │  (monitor)  │  │ (election)  │        │
-│  └─────────────┘  └─────────────┘  └─────────────┘        │
-│                        │                                    │
-│                        ▼                                    │
-│              ┌─────────────────┐                            │
-│              │     Redis       │                            │
-│              │ - Rate limiting │                           │
-│              │ - Leader lock   │                            │
-│              └─────────────────┘                            │
-│                                                              │
-└─────────────────────────────────────────────────────────────┘
-```
+The engine takes work off a Postgres queue (`FOR UPDATE SKIP LOCKED`, so multiple
+workers can dequeue concurrently without stepping on each other) and runs it in a
+Piscina worker pool, off the gRPC server's event loop. Every step's output goes into
+`step_runs` before the workflow moves on, which is what makes crash recovery and
+saga rollback possible - a restart just re-reads that table. Redis's only job is
+leader election, so exactly one reaper process recovers stale tasks at a time.
 
-## Key Features
+Crash recovery, the saga pattern, multi-worker safety, and rate limiting are all
+consequences of that one design choice (Postgres as the source of truth), not
+separate features bolted on top.
 
-### 1. Crash Recovery
-
-Every step's output is automatically saved. On crash, the workflow resumes from the last successful step.
-
-### 2. Saga Pattern
-
-Add compensation functions to automatically rollback when failures occur.
-
-### 3. Multi-Worker Support
-
-Multiple workers can process tasks concurrently without duplicate processing (SKIP LOCKED).
-
-### 4. Automatic Recovery
-
-Dead workers are detected via heartbeat, and their tasks are requeued automatically.
-
-### 5. Rate Limiting
-
-Built-in support for API rate limits (coming soon).
-
----
-
-## Next Steps
-
-- [Installation Guide](./installation) - Set up your environment
-- [Quick Start Tutorial](./tutorial) - Build your first workflow
-- [Core Concepts](./concepts) - Understand how Duraflow works
-- [API Reference](./api/overview) - Full API documentation
+Next: [Installation](./installation), then [your first workflow](./tutorial).

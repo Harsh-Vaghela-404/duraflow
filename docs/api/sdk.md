@@ -15,25 +15,25 @@ npm install @duraflow/sdk @duraflow/proto
 Defines a new workflow with a unique name.
 
 ```typescript
-import { workflow } from "@duraflow/sdk";
+import { workflow } from '@duraflow/sdk';
 
 interface MyInput {
-  userId: string;
+    userId: string;
 }
 
 interface MyOutput {
-  result: string;
+    result: string;
 }
 
-const myWorkflow = workflow<MyInput, MyOutput>("my-workflow", async (ctx) => {
-  // ctx.input is typed as MyInput
-  const { userId } = ctx.input;
+const myWorkflow = workflow<MyInput, MyOutput>('my-workflow', async (ctx) => {
+    // ctx.input is typed as MyInput
+    const { userId } = ctx.input;
 
-  const result = await ctx.step.run("process", async () => {
-    return `Processed user ${userId}`;
-  });
+    const result = await ctx.step.run('process', async () => {
+        return `Processed user ${userId}`;
+    });
 
-  return { result };
+    return { result };
 });
 ```
 
@@ -42,7 +42,7 @@ const myWorkflow = workflow<MyInput, MyOutput>("my-workflow", async (ctx) => {
 |-----------|------|-------------|
 | `name` | `string` | Unique workflow name (alphanumeric, dashes, underscores, max 100 chars) |
 | `handler` | `(ctx: WorkflowContext) => Promise<TOutput>` | Async function that executes the workflow |
-| `options` | `WorkflowOptions?` | Optional — `{ compensations }` map keyed by step key (see [WorkflowOptions](#workflowoptions)) |
+| `options` | `WorkflowOptions?` | Optional - `{ compensations }` map keyed by step key (see [WorkflowOptions](#workflowoptions)) |
 
 **Returns:** `Workflow<TOutput>`
 
@@ -52,14 +52,14 @@ Executes a step within a workflow.
 
 ```typescript
 const result = await ctx.step.run<string>(
-  "my-step",
-  async () => {
-    return "step output";
-  },
-  {
-    retries: 3,
-    timeout: 30000,
-  },
+    'my-step',
+    async () => {
+        return 'step output';
+    },
+    {
+        retries: 3,
+        timeout: 30000,
+    },
 );
 ```
 
@@ -81,17 +81,17 @@ const result = await ctx.step.run<string>(
 
 ```typescript
 interface WorkflowContext<TInput = unknown> {
-  // Unique identifier for this workflow run
-  runId: string;
+    // Unique identifier for this workflow run
+    runId: string;
 
-  // The workflow's name
-  workflowName: string;
+    // The workflow's name
+    workflowName: string;
 
-  // Input data passed to the workflow
-  input: TInput;
+    // Input data passed to the workflow
+    input: TInput;
 
-  // Step runner for executing steps
-  step: StepRunner;
+    // Step runner for executing steps
+    step: StepRunner;
 }
 ```
 
@@ -99,11 +99,7 @@ interface WorkflowContext<TInput = unknown> {
 
 ```typescript
 interface StepRunner {
-  run<T>(
-    name: string,
-    fn: () => Promise<T>,
-    options?: StepOptions<T>,
-  ): Promise<T>;
+    run<T>(name: string, fn: () => Promise<T>, options?: StepOptions<T>): Promise<T>;
 }
 ```
 
@@ -111,14 +107,14 @@ interface StepRunner {
 
 ```typescript
 interface StepOptions<T = unknown> {
-  // Number of retry attempts on failure (default: 0)
-  retries?: number;
+    // Number of retry attempts on failure (default: 0)
+    retries?: number;
 
-  // Timeout in milliseconds (default: no timeout)
-  timeout?: number;
+    // Timeout in milliseconds (default: no timeout)
+    timeout?: number;
 
-  // Optional rate-limit gate for this step
-  rateLimit?: RateLimitOptions;
+    // Optional rate-limit gate for this step
+    rateLimit?: RateLimitOptions;
 }
 ```
 
@@ -126,10 +122,10 @@ interface StepOptions<T = unknown> {
 
 ```typescript
 interface WorkflowOptions {
-  // Compensations keyed by step key. Each is a PURE function of that step's
-  // SAVED output (no closure over handler state). Registered at module load so
-  // a rollback in any process can resolve them; run in LIFO order on failure.
-  compensations?: Record<string, (output: unknown) => Promise<void>>;
+    // Compensations keyed by step key. Each is a PURE function of that step's
+    // SAVED output (no closure over handler state). Registered at module load so
+    // a rollback in any process can resolve them; run in LIFO order on failure.
+    compensations?: Record<string, (output: unknown) => Promise<void>>;
 }
 ```
 
@@ -137,59 +133,21 @@ interface WorkflowOptions {
 
 ```typescript
 type WorkflowHandler<TInput = unknown, TOutput = unknown> = (
-  ctx: WorkflowContext<TInput>,
+    ctx: WorkflowContext<TInput>,
 ) => Promise<TOutput>;
-```
-
-## Workflow Registry
-
-### `registerWorkflow(name, handler)`
-
-Register a workflow programmatically (alternative to using `workflow()`).
-
-```typescript
-import { registerWorkflow } from "@duraflow/sdk";
-
-registerWorkflow("my-workflow", async (ctx) => {
-  return { result: "done" };
-});
-```
-
-### `getWorkflow(name)`
-
-Retrieve a registered workflow.
-
-```typescript
-import { getWorkflow } from "@duraflow/sdk";
-
-const wf = getWorkflow("my-workflow");
-if (wf) {
-  console.log("Found:", wf.name);
-}
-```
-
-### `listWorkflows()`
-
-List all registered workflow names.
-
-```typescript
-import { listWorkflows } from "@duraflow/sdk";
-
-const names = listWorkflows();
-console.log("Registered:", names);
 ```
 
 ## Compensation
 
 ### `registerCompensation(name, fn)`
 
-Low-level API to register a compensation by its full `${workflowName}:${stepKey}` key. Most code should use the `compensations` map on `workflow(...)` instead — it registers for you. Use this directly only if you need a stable, hand-managed key.
+Low-level API to register a compensation by its full `${workflowName}:${stepKey}` key. Most code should use the `compensations` map on `workflow(...)` instead - it registers for you. Use this directly only if you need a stable, hand-managed key.
 
 ```typescript
-import { registerCompensation } from "@duraflow/sdk";
+import { registerCompensation } from '@duraflow/sdk';
 
-registerCompensation("workflow:step-name", async (output) => {
-  await api.cancel(output.id);
+registerCompensation('workflow:step-name', async (output) => {
+    await api.cancel(output.id);
 });
 ```
 
@@ -198,9 +156,9 @@ registerCompensation("workflow:step-name", async (output) => {
 Retrieve a registered compensation.
 
 ```typescript
-import { compensationRegistry } from "@duraflow/sdk";
+import { compensationRegistry } from '@duraflow/sdk';
 
-const compensation = compensationRegistry.get("workflow:step-name");
+const compensation = compensationRegistry.get('workflow:step-name');
 ```
 
 ## Serialization
@@ -210,9 +168,9 @@ const compensation = compensationRegistry.get("workflow:step-name");
 Serialize a value to JSON string (uses SuperJSON for type preservation).
 
 ```typescript
-import { serialize, deserialize } from "@duraflow/sdk";
+import { serialize, deserialize } from '@duraflow/sdk';
 
-const json = serialize({ date: new Date(), map: new Map([["key", "value"]]) });
+const json = serialize({ date: new Date(), map: new Map([['key', 'value']]) });
 // SuperJSON preserves types that regular JSON.stringify loses
 
 const data = deserialize<MyType>(json);
@@ -231,21 +189,21 @@ const value = deserialize<MyType>(jsonString);
 ### SerializationError
 
 ```typescript
-import { SerializationError } from "@duraflow/sdk";
+import { SerializationError } from '@duraflow/sdk';
 
 try {
-  serialize(veryLargeObject);
+    serialize(veryLargeObject);
 } catch (e) {
-  if (e instanceof SerializationError) {
-    console.log("Payload too large:", e.message);
-  }
+    if (e instanceof SerializationError) {
+        console.log('Payload too large:', e.message);
+    }
 }
 ```
 
 ## Task Status
 
 ```typescript
-import { taskStatus } from "@duraflow/sdk";
+import { taskStatus } from '@duraflow/sdk';
 
 // Enum values
 taskStatus.PENDING; // Waiting in queue
@@ -264,7 +222,7 @@ taskStatus.PARTIAL_ROLLBACK; // Some compensations failed
 Thrown when a step needs to be retried (handled automatically by the SDK).
 
 ```typescript
-import { StepRetryError } from "@duraflow/sdk";
+import { StepRetryError } from '@duraflow/sdk';
 
 // This is thrown internally during retry
 // You don't typically need to handle it directly
@@ -274,80 +232,70 @@ import { StepRetryError } from "@duraflow/sdk";
 
 ```typescript
 import {
-  workflow,
-  step,
-  taskStatus,
-  registerCompensation,
-  serialize,
-  deserialize,
-} from "@duraflow/sdk";
+    workflow,
+    step,
+    taskStatus,
+    registerCompensation,
+    serialize,
+    deserialize,
+} from '@duraflow/sdk';
 
 // Define input/output types
 interface OrderInput {
-  orderId: string;
-  customerEmail: string;
+    orderId: string;
+    customerEmail: string;
 }
 
 interface OrderOutput {
-  confirmationNumber: string;
+    confirmationNumber: string;
 }
 
 // Define the workflow
-const orderWorkflow = workflow<OrderInput, OrderOutput>(
-  "process-order",
-  async (ctx) => {
+const orderWorkflow = workflow<OrderInput, OrderOutput>('process-order', async (ctx) => {
     // Step 1: Validate order
-    await ctx.step.run("validate", async () => {
-      if (!ctx.input.customerEmail.includes("@")) {
-        throw new Error("Invalid email");
-      }
-      return { valid: true };
+    await ctx.step.run('validate', async () => {
+        if (!ctx.input.customerEmail.includes('@')) {
+            throw new Error('Invalid email');
+        }
+        return { valid: true };
     });
 
     // Step 2: Process with retry
     const result = await ctx.step.run(
-      "process",
-      async () => {
-        // Simulate processing
-        return {
-          confirmationNumber: "CONF-" + Date.now(),
-        };
-      },
-      {
-        retries: 3,
-        timeout: 30000,
-      },
+        'process',
+        async () => {
+            // Simulate processing
+            return {
+                confirmationNumber: 'CONF-' + Date.now(),
+            };
+        },
+        {
+            retries: 3,
+            timeout: 30000,
+        },
     );
 
     return result;
-  },
-);
+});
 
 // Export for use in engine
 export { orderWorkflow };
 ```
 
-## Workflow in Worker Threads
+## Loading Workflows into the Engine
 
-When using worker threads, register workflows via environment variable:
+The engine loads your workflow modules by path, via the `DURAFLOW_WORKFLOWS` env var
+(comma-separated if you have more than one file):
 
 ```bash
-# In your workflow file
 export const myWorkflow = workflow("my-workflow", async (ctx) => {
   // ...
 });
+```
 
-// When starting engine
+```bash
 DURAFLOW_WORKFLOWS=./path/to/workflows.ts npm run dev
 ```
 
-Or manually register in the worker entry:
-
-```typescript
-// workflow.worker.ts
-import { registerWorkflow } from "@duraflow/sdk";
-import { myWorkflow } from "./workflows";
-
-// Auto-register all exported workflows
-registerWorkflow(myWorkflow.name, myWorkflow.handler);
-```
+Importing the file is enough - `workflow()` registers itself, there's no separate
+registration step to wire up.

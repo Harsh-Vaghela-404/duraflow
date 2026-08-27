@@ -245,8 +245,5 @@ async function submitAndMonitor() {
 }
 ```
 
-## Next Steps
-
-- [Core Concepts](./concepts) - Deep dive into how Duraflow works
-- [Saga Pattern](./sagas) - Learn about compensation and rollback
-- [API Reference](./api/overview) - Full API documentation
+From here, [Core Concepts](./concepts) covers the internals (SKIP LOCKED, the reaper,
+leader election) and [Sagas](./sagas) covers compensation in more depth.
