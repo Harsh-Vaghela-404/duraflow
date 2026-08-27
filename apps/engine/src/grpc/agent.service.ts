@@ -119,7 +119,7 @@ export class AgentServiceImpl {
             if (wasRunning) {
                 // Signal the executor to abort the in-flight Piscina run.
                 // WorkflowExecutor.execute() catches the AbortError and triggers
-                // rollback from there — keeping rollback ownership in one place.
+                // rollback from there - keeping rollback ownership in one place.
                 this.executor.cancel(task_id);
             }
         } catch (err) {

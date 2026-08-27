@@ -1,12 +1,12 @@
 {
-  "recommendations": [
-    // ESLint — shows errors/warnings inline as you type
-    "dbaeumer.vscode-eslint",
-    // Prettier — formats on save
-    "esbenp.prettier-vscode",
-    // TypeScript language features (usually bundled, but listed for clarity)
-    "ms-vscode.vscode-typescript-next",
-    // REST/gRPC testing
-    "kreya.kreya"
-  ]
+    "recommendations": [
+        // ESLint - shows errors/warnings inline as you type
+        "dbaeumer.vscode-eslint",
+        // Prettier - formats on save
+        "esbenp.prettier-vscode",
+        // TypeScript language features (usually bundled, but listed for clarity)
+        "ms-vscode.vscode-typescript-next",
+        // REST/gRPC testing
+        "kreya.kreya"
+    ]
 }

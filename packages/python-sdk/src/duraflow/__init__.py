@@ -1,4 +1,4 @@
-"""Duraflow Python SDK — durable workflow engine for AI agents."""
+"""Duraflow Python SDK - durable workflow engine for AI agents."""
 
 from duraflow.client import DuraflowClient, TaskHandle
 from duraflow.context import StepOptions, StepRunner, WorkflowContext

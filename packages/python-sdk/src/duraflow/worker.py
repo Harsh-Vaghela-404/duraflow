@@ -152,7 +152,7 @@ class Worker:
                     task_id=assignment.task_id, output=serialize(result)
                 )
             )
-        except Exception as exc:  # noqa: BLE001 — report failure, never crash the worker
+        except Exception as exc:  # noqa: BLE001 - report failure, never crash the worker
             logger.exception("task %s failed", assignment.task_id)
             await self._stub.FailTask(
                 service_pb2.FailTaskRequest(  # type: ignore[attr-defined]

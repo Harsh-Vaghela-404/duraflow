@@ -1,4 +1,4 @@
-// Shared engine constants. Import from here — do NOT inline these values in service files.
+// Shared engine constants. Import from here - do NOT inline these values in service files.
 
 export const POLL_MIN_INTERVAL_MS = 100;
 export const POLL_MAX_INTERVAL_MS = 500;

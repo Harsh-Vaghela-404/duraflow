@@ -27,7 +27,7 @@ describe('RateLimiter (integration)', () => {
         await redis.quit();
     });
 
-    describe('token bucket — basic behavior', () => {
+    describe('token bucket - basic behavior', () => {
         it('allows requests up to capacity and denies beyond it', async () => {
             const key = testKey('basic');
 
@@ -40,7 +40,7 @@ describe('RateLimiter (integration)', () => {
             const denied = results.filter((r) => r === 0).length;
 
             expect(allowed).toBe(5); // capacity
-            expect(denied).toBe(2);  // over capacity
+            expect(denied).toBe(2); // over capacity
         });
 
         it('refills tokens over time', async () => {
@@ -54,7 +54,7 @@ describe('RateLimiter (integration)', () => {
             // next immediate call is denied
             expect(await limiter.acquire(key, 1)).toBe(0);
 
-            // wait 250ms — should have ~1.25 tokens refilled at 5/sec
+            // wait 250ms - should have ~1.25 tokens refilled at 5/sec
             await sleep(250);
             expect(await limiter.acquire(key, 1)).toBe(1);
         });
@@ -71,7 +71,7 @@ describe('RateLimiter (integration)', () => {
             expect(remaining).toBeGreaterThanOrEqual(3);
             expect(remaining).toBeLessThanOrEqual(5);
 
-            // getRemaining does not consume — another call should not reduce count further
+            // getRemaining does not consume - another call should not reduce count further
             const remainingAgain = await limiter.getRemaining(key);
             expect(remainingAgain).toBeGreaterThanOrEqual(remaining - 1); // allow for tiny refill delta
         });
@@ -144,12 +144,12 @@ describe('RateLimiter (integration)', () => {
             // exhaust the single token
             await slowLimiter.acquire(key, 1);
 
-            // timeout of 300ms — refill at 0.1/sec means 10s before next token
+            // timeout of 300ms - refill at 0.1/sec means 10s before next token
             await expect(slowLimiter.waitForToken(key, 300)).rejects.toThrow(RateLimitTimeoutError);
         });
 
-        it('handles concurrent waitForToken callers — all resolve', async () => {
-            // fresh key — capacity=5, so 5 concurrent callers should all resolve immediately
+        it('handles concurrent waitForToken callers - all resolve', async () => {
+            // fresh key - capacity=5, so 5 concurrent callers should all resolve immediately
             const key = testKey('wait-concurrent');
 
             const promises = Array.from({ length: 5 }, () => limiter.waitForToken(key, 2000));
@@ -167,7 +167,7 @@ describe('RateLimiter (integration)', () => {
             );
 
             const allowed = results.filter((r) => r === 1).length;
-            // Lua script is atomic — at most capacity tokens can be granted
+            // Lua script is atomic - at most capacity tokens can be granted
             expect(allowed).toBeLessThanOrEqual(5);
         });
     });

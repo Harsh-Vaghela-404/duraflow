@@ -56,7 +56,7 @@ class StepRunner:
                 result = await self._invoke(fn)
                 await self._complete(name, result)
                 return result
-            except Exception as exc:  # noqa: BLE001 — capture to persist + maybe retry
+            except Exception as exc:  # noqa: BLE001 - capture to persist + maybe retry
                 last_error = exc
                 if attempt < options.retries:
                     await asyncio.sleep(_RETRY_BACKOFF_BASE**attempt)
@@ -99,7 +99,7 @@ class StepRunner:
 
 @dataclass
 class WorkflowContext:
-    """Passed to every workflow function — provides run metadata and the step runner."""
+    """Passed to every workflow function - provides run metadata and the step runner."""
 
     run_id: str
     workflow_name: str

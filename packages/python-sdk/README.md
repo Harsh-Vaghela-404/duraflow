@@ -1,6 +1,6 @@
 # Duraflow Python SDK
 
-Durable workflow engine for AI agents — crash recovery, sagas, and step memoization.
+Durable workflow engine for AI agents - crash recovery, sagas, and step memoization.
 
 The Python SDK lets you submit and manage workflow runs on a Duraflow engine, and
 define workflows whose steps are checkpointed so they survive crashes.
@@ -37,7 +37,7 @@ from duraflow import DuraflowClient, Status
 
 async def main():
     async with DuraflowClient("localhost", 50051) as client:
-        # Submit a workflow run — returns a handle you can poll.
+        # Submit a workflow run - returns a handle you can poll.
         handle = await client.submit_task("my-workflow", {"user_id": 123})
         print("submitted:", handle.task_id)
 
@@ -89,7 +89,7 @@ and unique within the process.
 
 Inside a workflow, wrap each unit of work in `ctx.step.run(name, fn, opts)`. The
 runner asks the engine whether that step already completed for this task; if so,
-it returns the cached output **without re-executing** — this is what makes
+it returns the cached output **without re-executing** - this is what makes
 workflows crash-recoverable. New steps execute, then their result (or error) is
 persisted to the engine.
 
@@ -154,12 +154,12 @@ await worker.stop()
 
 ## Error Handling
 
-| Exception | When |
-|---|---|
-| `ConnectionError` | engine unreachable within the connect timeout |
-| `RuntimeError` | client/worker used before connecting (`async with` / `start()`) |
-| `ValueError` | invalid workflow name, duplicate registration, unknown workflow |
-| `SerializationError` | non-serializable step payload or >1MB |
+| Exception            | When                                                            |
+| -------------------- | --------------------------------------------------------------- |
+| `ConnectionError`    | engine unreachable within the connect timeout                   |
+| `RuntimeError`       | client/worker used before connecting (`async with` / `start()`) |
+| `ValueError`         | invalid workflow name, duplicate registration, unknown workflow |
+| `SerializationError` | non-serializable step payload or >1MB                           |
 
 ## Development
 

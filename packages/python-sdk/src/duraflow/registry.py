@@ -9,7 +9,7 @@ WorkflowFn = Callable[..., Any]
 
 @dataclass
 class WorkflowDefinition:
-    """A registered workflow — its name and the user function plus whether it is async."""
+    """A registered workflow - its name and the user function plus whether it is async."""
 
     name: str
     fn: WorkflowFn
@@ -44,7 +44,7 @@ class WorkflowRegistry:
         return list(self._workflows.keys())
 
     def clear(self) -> None:
-        """Reset the registry — primarily for test isolation."""
+        """Reset the registry - primarily for test isolation."""
         self._workflows.clear()
 
     @classmethod

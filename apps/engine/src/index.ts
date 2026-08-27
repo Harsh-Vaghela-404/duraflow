@@ -54,7 +54,7 @@ async function main() {
         );
     }
 
-    // Load workflows in the main thread too — not to execute them, but so the
+    // Load workflows in the main thread too - not to execute them, but so the
     // compensationRegistry is populated here. Rollback runs in the main thread
     // and must resolve each step's compensation by name (see B1b).
     loadWorkflows();

@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "duraflow"
 version = "0.1.0"
-description = "Durable workflow engine for AI agents — crash recovery, sagas, and step memoization"
+description = "Durable workflow engine for AI agents - crash recovery, sagas, and step memoization"
 authors = ["Duraflow <noreply@duraflow.dev>"]
 license = "MIT"
 readme = "README.md"
@@ -50,7 +50,7 @@ warn_return_any = true
 warn_unused_configs = true
 exclude = ['src/duraflow/_generated/', 'src/duraflow/_scripts/', 'scripts/']
 
-# Generated gRPC code and proto stubs are not type-checked — they build their
+# Generated gRPC code and proto stubs are not type-checked - they build their
 # message attributes dynamically and ship without py.typed markers.
 [[tool.mypy.overrides]]
 module = ["duraflow._generated.*", "duraflow._scripts.*", "grpc_tools.*", "google.protobuf.*"]

@@ -26,7 +26,7 @@ _CONNECT_TIMEOUT_SECONDS = 5.0
 
 
 class TaskHandle:
-    """Returned by submit_task — holds the task ID and a reference back to the client for polling."""
+    """Returned by submit_task - holds the task ID and a reference back to the client for polling."""
 
     def __init__(self, task_id: str, client: DuraflowClient) -> None:
         self.task_id = task_id

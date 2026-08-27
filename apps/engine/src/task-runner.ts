@@ -16,7 +16,7 @@ export async function runTask(
         await executor.execute(task);
         console.log(`${TAG} completed task ${task.id}`);
     } catch (err) {
-        // executor.execute() already marked the task as failed — just log and re-throw
+        // executor.execute() already marked the task as failed - just log and re-throw
         console.error(`${TAG} task ${task.id} failed:`, err);
         throw err;
     } finally {

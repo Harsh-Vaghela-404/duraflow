@@ -46,7 +46,7 @@ def workflow(name_or_fn: Union[str, F, None] = None) -> Union[F, Callable[[F], F
     if callable(name_or_fn):
         return decorate(name_or_fn, None)
 
-    # @workflow() or @workflow("name") — return the actual decorator
+    # @workflow() or @workflow("name") - return the actual decorator
     name = name_or_fn
 
     def decorator(fn: F) -> F:

@@ -1,30 +1,28 @@
 {
-  // Format every file on save using Prettier
-  "editor.formatOnSave": true,
-  "editor.defaultFormatter": "esbenp.prettier-vscode",
+    // Format every file on save using Prettier
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
 
-  // Run ESLint auto-fix on save (e.g. unused imports, prefer-const)
-  "editor.codeActionsOnSave": {
-    "source.fixAll.eslint": "explicit"
-  },
+    // Run ESLint auto-fix on save (e.g. unused imports, prefer-const)
+    "editor.codeActionsOnSave": {
+        "source.fixAll.eslint": "explicit"
+    },
 
-  // ESLint validates TypeScript files
-  "eslint.validate": ["javascript", "typescript"],
+    // ESLint validates TypeScript files
+    "eslint.validate": ["javascript", "typescript"],
 
-  // Tell ESLint extension where each workspace root is so it finds the flat config
-  "eslint.workingDirectories": [
-    { "directory": ".", "changeProcessCWD": true }
-  ],
+    // Tell ESLint extension where each workspace root is so it finds the flat config
+    "eslint.workingDirectories": [{ "directory": ".", "changeProcessCWD": true }],
 
-  // TypeScript: use the workspace version (same as tsc in CI)
-  "typescript.tsdk": "node_modules/typescript/lib",
+    // TypeScript: use the workspace version (same as tsc in CI)
+    "typescript.tsdk": "node_modules/typescript/lib",
 
-  // Show type errors inline — redundant with ESLint but gives faster feedback
-  "typescript.validate.enable": true,
+    // Show type errors inline - redundant with ESLint but gives faster feedback
+    "typescript.validate.enable": true,
 
-  // Trim trailing whitespace
-  "files.trimTrailingWhitespace": true,
+    // Trim trailing whitespace
+    "files.trimTrailingWhitespace": true,
 
-  // Final newline
-  "files.insertFinalNewline": true
+    // Final newline
+    "files.insertFinalNewline": true
 }

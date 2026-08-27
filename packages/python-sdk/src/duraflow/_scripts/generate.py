@@ -1,4 +1,4 @@
-"""Proto code generation script — wired in TASK-055."""
+"""Proto code generation script - wired in TASK-055."""
 
 from grpc_tools import protoc
 
@@ -11,7 +11,7 @@ out_path   = os.path.join(script_dir, "..", "_generated")               # 1 leve
 
 def main() -> None:
     protoc.main([
-        "grpc_tools.protoc",       # argv[0] — name of the program (convention)
+        "grpc_tools.protoc",       # argv[0] - name of the program (convention)
         f"--proto_path={proto_path}",
         f"--python_out={out_path}",
         f"--grpc_python_out={out_path}",

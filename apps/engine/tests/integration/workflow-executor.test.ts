@@ -41,7 +41,7 @@ describe('WorkflowExecutor Integration', () => {
 
         await expect(executor.execute(task)).rejects.toThrow('Task failed successfully');
 
-        // Rollback is fire-and-forget — allow it to complete before asserting.
+        // Rollback is fire-and-forget - allow it to complete before asserting.
         // With no compensatable steps, rollback immediately transitions to rolled_back.
         await sleep(200);
 

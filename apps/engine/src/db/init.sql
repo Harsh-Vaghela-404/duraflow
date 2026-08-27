@@ -1,10 +1,10 @@
--- Duraflow — canonical database schema.
+-- Duraflow - canonical database schema.
 --
 -- This file is the single source of truth for the Duraflow Postgres schema.
 -- It is executed in two ways:
 --   1. Automatically by the postgres:16-alpine container on first startup,
 --      via the official /docker-entrypoint-initdb.d/ mechanism. Runs once
---      per fresh volume — if you `docker compose down -v`, the next `up`
+--      per fresh volume - if you `docker compose down -v`, the next `up`
 --      re-runs this script.
 --   2. Manually via `tsx apps/engine/src/db/migrate.ts` against an
 --      already-running database. Idempotent (CREATE TABLE IF NOT EXISTS).
@@ -13,7 +13,7 @@
 -- (task.entity.ts, step_runs.entity.ts, dead_letter_queue.entity.ts).
 
 -- ============================================================
--- agent_tasks — durable workflow task queue
+-- agent_tasks - durable workflow task queue
 -- ============================================================
 CREATE TABLE IF NOT EXISTS agent_tasks (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -40,7 +40,7 @@ ALTER TABLE agent_tasks
     ADD COLUMN IF NOT EXISTS runtime TEXT NOT NULL DEFAULT 'node';
 
 -- ============================================================
--- step_runs — per-step execution records (memoization + saga)
+-- step_runs - per-step execution records (memoization + saga)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS step_runs (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS step_runs (
 );
 
 -- ============================================================
--- dead_letter_queue — failed compensations for operator retry
+-- dead_letter_queue - failed compensations for operator retry
 -- ============================================================
 CREATE TABLE IF NOT EXISTS dead_letter_queue (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
