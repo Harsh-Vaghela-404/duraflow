@@ -13,7 +13,7 @@ export interface ReapedTask {
 }
 
 // Recovers stale tasks from dead workers. Runs on only one instance at a time
-// via Redis leader election — so the cluster can't double-requeue the same task.
+// via Redis leader election - so the cluster can't double-requeue the same task.
 export class Reaper {
     private readonly intervalMs: number;
     private readonly staleThresholdSeconds: number;
@@ -40,13 +40,12 @@ export class Reaper {
         }
 
         this.running = true;
-        console.log(`${TAG} started (interval: ${this.intervalMs}ms, stale threshold: ${this.staleThresholdSeconds}s)`);
+        console.log(
+            `${TAG} started (interval: ${this.intervalMs}ms, stale threshold: ${this.staleThresholdSeconds}s)`,
+        );
 
-        // Every instance runs the loop; only the current leader actually reaps.
-        // A non-leader re-attempts election on each tick, so when the leader dies
-        // and its Redis lease expires, a follower promotes itself — this is what
-        // makes failover work (previously election was attempted only once at
-        // startup, so a dead leader was never replaced).
+        // Every instance runs the loop, only the leader reaps. Followers retry
+        // election each tick, so a new leader takes over once the old lease expires.
         // Recursive setTimeout so each tick waits for the previous reap to finish.
         void this.runReapLoop();
     }
@@ -61,7 +60,9 @@ export class Reaper {
             console.error(`${TAG} reap loop error:`, err);
         }
         if (this.running) {
-            this.timeoutHandle = setTimeout(() => { void this.runReapLoop(); }, this.intervalMs);
+            this.timeoutHandle = setTimeout(() => {
+                void this.runReapLoop();
+            }, this.intervalMs);
         }
     }
 
@@ -93,7 +94,7 @@ export class Reaper {
 
     async reap(): Promise<ReapedTask[]> {
         if (this.isReaping) return [];
-        if (this.running && !await this.leaderElector.isLeader()) {
+        if (this.running && !(await this.leaderElector.isLeader())) {
             console.warn(`${TAG} lost leadership, skipping reap cycle`);
             return [];
         }
@@ -102,11 +103,13 @@ export class Reaper {
         const reaped: ReapedTask[] = [];
 
         try {
-            reaped.push(...await this.requeueStaleTasks());
-            reaped.push(...await this.failExhaustedTasks());
+            reaped.push(...(await this.requeueStaleTasks()));
+            reaped.push(...(await this.failExhaustedTasks()));
 
             if (reaped.length > 0) {
-                console.log(`${TAG} reaped ${reaped.length} tasks: ${reaped.map(t => `${t.id}(${t.action})`).join(', ')}`);
+                console.log(
+                    `${TAG} reaped ${reaped.length} tasks: ${reaped.map((t) => `${t.id}(${t.action})`).join(', ')}`,
+                );
             }
         } catch (err) {
             console.error(`${TAG} error during reap cycle:`, err);
@@ -128,7 +131,12 @@ export class Reaper {
             [taskStatus.PENDING, taskStatus.RUNNING, this.staleThresholdSeconds],
         );
 
-        return res.rows.map(row => ({ id: row.id, workflow_name: row.workflow_name, retry_count: row.retry_count, action: 'requeued' as const }));
+        return res.rows.map((row) => ({
+            id: row.id,
+            workflow_name: row.workflow_name,
+            retry_count: row.retry_count,
+            action: 'requeued' as const,
+        }));
     }
 
     private async failExhaustedTasks(): Promise<ReapedTask[]> {
@@ -145,6 +153,11 @@ export class Reaper {
             [taskStatus.FAILED, taskStatus.RUNNING, this.staleThresholdSeconds],
         );
 
-        return res.rows.map(row => ({ id: row.id, workflow_name: row.workflow_name, retry_count: row.retry_count, action: 'failed' as const }));
+        return res.rows.map((row) => ({
+            id: row.id,
+            workflow_name: row.workflow_name,
+            retry_count: row.retry_count,
+            action: 'failed' as const,
+        }));
     }
 }

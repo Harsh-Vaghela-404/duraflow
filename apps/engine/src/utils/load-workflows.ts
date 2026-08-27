@@ -2,23 +2,19 @@ import path from 'path';
 
 const TAG = '[load-workflows]';
 
-// Loads the user workflow modules named in DURAFLOW_WORKFLOWS (comma-separated
-// paths). Importing a workflow module runs its top-level `workflow(...)` calls,
-// which register the workflow handler AND its compensations (see the SDK's
-// Compensation contract).
-//
-// This MUST run in every process that needs those registrations:
-//   - each Piscina worker thread (to run the workflow), and
-//   - the engine main thread (so the RollbackOrchestrator can resolve
-//     compensations by name at rollback time).
-//
-// Paths are resolved relative to process.cwd(), matching how the engine is
-// launched (`tsx src/index.ts` from apps/engine).
+// Importing a workflow file runs its top-level workflow() calls, which register
+// the handler and its compensations. Needs to run in both worker threads (to
+// execute the workflow) and the main thread (rollback resolves compensations
+// by name too).
 export function loadWorkflows(raw: string | undefined = process.env.DURAFLOW_WORKFLOWS): void {
-    const paths = raw?.split(',').map((p) => p.trim()).filter(Boolean) ?? [];
+    const paths =
+        raw
+            ?.split(',')
+            .map((p) => p.trim())
+            .filter(Boolean) ?? [];
 
     if (paths.length === 0) {
-        console.log(`${TAG} no DURAFLOW_WORKFLOWS set — no user workflows loaded`);
+        console.log(`${TAG} no DURAFLOW_WORKFLOWS set - no user workflows loaded`);
         return;
     }
 
