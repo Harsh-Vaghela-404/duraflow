@@ -1,6 +1,7 @@
 import { defineConfig } from "vitepress";
+import { withMermaid } from "vitepress-plugin-mermaid";
 
-export default defineConfig({
+export default withMermaid(defineConfig({
   title: "Duraflow",
   description: "Durable workflow engine with crash recovery and saga pattern",
   cleanUrls: true,
@@ -12,6 +13,7 @@ export default defineConfig({
       { text: "Tutorial", link: "/tutorial" },
       { text: "Sagas", link: "/sagas" },
       { text: "API", link: "/api/overview" },
+      { text: "Blog", link: "/blog/" },
     ],
     sidebar: [
       {
@@ -39,6 +41,17 @@ export default defineConfig({
           { text: "Database Schema", link: "/database" },
         ],
       },
+      {
+        text: "Blog",
+        collapsed: false,
+        items: [
+          { text: "All posts", link: "/blog/" },
+          {
+            text: "Memoization Is All You Need... Until",
+            link: "/blog/memoization-vs-replay",
+          },
+        ],
+      },
     ],
     socialLinks: [
       { icon: "github", link: "https://github.com/your-org/duraflow" },
@@ -58,4 +71,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));

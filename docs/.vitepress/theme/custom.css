@@ -1,0 +1,33 @@
+/* Mermaid diagrams: render at natural size and scroll instead of shrinking to fit the column */
+.mermaid {
+  overflow-x: auto;
+  cursor: zoom-in;
+}
+.mermaid svg {
+  max-width: none !important;
+  width: auto !important;
+  height: auto !important;
+}
+
+/* Click-to-zoom overlay */
+.mermaid-zoom-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.8);
+  z-index: 999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: zoom-out;
+  overflow: auto;
+  padding: 40px;
+}
+.mermaid-zoom-backdrop svg {
+  max-width: none !important;
+  width: auto !important;
+  height: auto !important;
+  background: var(--vp-c-bg);
+  border-radius: 8px;
+  padding: 24px;
+  transform: scale(1.6);
+}
